@@ -26,6 +26,13 @@ O **PCAP Analyzer** elimina a necessidade de ferramentas complexas como Wireshar
 - 🛡️ **Mitigação de DDoS**: Ideal para verificar volumetrias suspeitas e vetores de amplificação rapidamente.
 - 🔒 **100% Offline e Privada**: Aplicação sem intenção de uso de APIs externas. Todo processamento é local.
 
+> ⚠️ **Nota de Transparência:**
+>
+> - **Requisitos:** Basta ter Windows para rodar o executável.
+> - **Internet:** A única dependência de internet é para carregar o visual (CSS e Fontes).
+> - **Privacidade:** Aplicação local, **sem uso de APIs externas** e **sem uso de IA para análise em tempo real**. É puro código rodando na sua máquina.
+> - **Origem:** Este software foi arquitetado e codificado com auxílio do **Gemini 3.0 High**, mas o produto final é puramente lógica de programação (Python/JS).
+
 ### Funcionalidades
 
 - **Multiformato**: Suporte nativo para PCAP e PCAPNG.
@@ -75,6 +82,13 @@ Inclui diversas regras de detecção pré-configuradas (Scanners, Webshells, Aut
 
 - 🛡️ **DDoS Mitigation**: Ideal for quickly verifying suspicious volumetrics and amplification vectors.
 - 🔒 **100% Offline & Private**: Application with no intention of using external APIs. All processing is local.
+
+> ⚠️ **Transparency Note:**
+>
+> - **Requirements:** Only Windows is required to run the executable.
+> - **Internet:** The only internet dependency is for loading visuals (CSS and Fonts).
+> - **Privacy:** Local application, **no external APIs** and **no AI used for real-time analysis**. It is pure code running on your machine.
+> - **Origin:** This software was architected and coded with the help of **Gemini 3.0 High**, but the final product is purely programming logic (Python/JS).
 
 ### Features
 
