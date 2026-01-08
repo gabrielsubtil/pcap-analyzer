@@ -2,7 +2,13 @@
 
 Uma ferramenta poderosa e independente para análise de tráfego de rede, projetada para identificar ameaças e visualizar estatísticas de forma intuitiva. Suporta arquivos `.pcap` e `.pcapng`.
 
+> 🚀 **Desenvolvido em colaboração com Google Antigravity e time Gemini.**
+> Esta aplicação é **gratuita** graças ao apoio dessas tecnologias.
+
 *A powerful and standalone network traffic analysis tool designed to identify threats and visualize statistics intuitively. Supports `.pcap` and `.pcapng` files.*
+
+> 🚀 **Developed in collaboration with Google Antigravity and the Gemini team.**
+> This application is **free** thanks to the support of these technologies.
 
 ---
 
@@ -14,6 +20,11 @@ Uma ferramenta poderosa e independente para análise de tráfego de rede, projet
 ### Sobre
 
 O **PCAP Analyzer** elimina a necessidade de ferramentas complexas como Wireshark para análises rápidas e visuais. Focado em segurança e performance, ele oferece um dashboard rico e detecção automática de padrões suspeitos.
+
+**Destaques:**
+
+- 🛡️ **Mitigação de DDoS**: Ideal para verificar volumetrias suspeitas e vetores de amplificação rapidamente.
+- 🔒 **100% Offline e Privada**: Aplicação sem intenção de uso de APIs externas. Todo processamento é local.
 
 ### Funcionalidades
 
@@ -59,6 +70,11 @@ Inclui diversas regras de detecção pré-configuradas (Scanners, Webshells, Aut
 ### About
 
 **PCAP Analyzer** eliminates the need for complex tools like Wireshark for quick and visual analysis. Focused on security and performance, it offers a rich dashboard and automatic detection of suspicious patterns.
+
+**Highlights:**
+
+- 🛡️ **DDoS Mitigation**: Ideal for quickly verifying suspicious volumetrics and amplification vectors.
+- 🔒 **100% Offline & Private**: Application with no intention of using external APIs. All processing is local.
 
 ### Features
 
