@@ -43,7 +43,7 @@ Inclui diversas regras de detecção pré-configuradas (Scanners, Webshells, Aut
 
 - **Usuário**: gabrielsubtil
 - **GitHub**: [github.com/gabrielsubtil](https://github.com/gabrielsubtil)
-- **E-mail**: <gabrielsubtil@hotmail.com>
+- **Contato**: [instagram.com/subtil](https://instagram.com/subtil)
 
 ### Licença
 
@@ -88,7 +88,7 @@ Includes several pre-configured detection rules (Scanners, Webshells, Weak Auth,
 
 - **User**: gabrielsubtil
 - **GitHub**: [github.com/gabrielsubtil](https://github.com/gabrielsubtil)
-- **E-mail**: <gabrielsubtil@hotmail.com>
+- **Contato**: [instagram.com/subtil](https://instagram.com/subtil)
 
 ### License
 

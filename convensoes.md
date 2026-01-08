@@ -52,6 +52,11 @@ Todas as regras de detecção (assinaturas, portas, tráfego) devem seguir estri
 - Atualizações de convenções ou mudanças visuais significativas incrementam o **Minor** (ex: 4.0 -> 4.1).
 - Mudanças no motor de análise ou quebra de compatibilidade incrementam o **Major**.
 
+### 4. Regras de Segurança e Infraestrutura
+
+- **Builds e Binários**: É estritamente **PROIBIDO** deletar arquivos executáveis (`.exe`), pastas de distribuição (`dist_windows/`) ou artefatos de build sem solicitação explícita do usuário.
+- **Sanitização**: Qualquer limpeza automática deve se restringir a arquivos temporários (`__pycache__`, `tmp`) e nunca tocar em produtos finais de compilação.
+
 ---
 
 ## 🇺🇸 English (EN-US)
@@ -103,6 +108,11 @@ All detection rules (signatures, ports, traffic) must strictly follow the field 
 - Versioning follows SemVer (Major.Minor.Patch).
 - Convention updates or significant visual changes increment **Minor** (e.g., 4.0 -> 4.1).
 - Changes to the analysis engine or breaking compatibility increment **Major**.
+
+### 4. Security and Infrastructure Rules
+
+- **Builds and Binaries**: It is strictly **FORBIDDEN** to delete executable files (`.exe`), distribution folders (`dist_windows/`), or build artifacts without explicit user request.
+- **Sanitization**: Any automatic cleanup must be restricted to temporary files (`__pycache__`, `tmp`) and never touch final compilation products.
 
 ---
 *Document updated on: 01/08/2026 for Release 4.1.0*
