@@ -1,0 +1,12 @@
+Nome da Aplicação: Analizador de PCAP
+Author: Gabriel Subtil
+Versão: 5.0
+Linsença: PolyForm Shield License 1.0.0
+
+[Informações Extras para PyInstaller/Windows]
+Company Name: Gabriel Subtil
+File Description: Ferramenta de Análise de Tráfego de Rede
+Legal Copyright: Copyright © 2026 Gabriel Subtil. Todos os direitos reservados.
+Original Filename: Analizador de PCAP.exe
+Product Name: Analizador de PCAP
+Internal Name: pcap_analyzer_v5

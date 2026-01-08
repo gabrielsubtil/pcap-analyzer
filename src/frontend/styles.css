@@ -1,0 +1,61 @@
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #0f172a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #1e293b;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #334155;
+}
+
+body {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+}
+
+/* Custom Context Menu */
+#custom-context-menu {
+    display: none;
+    position: absolute;
+    z-index: 10000;
+    background-color: #1e293b;
+    /* slate-800 */
+    border: 1px solid #334155;
+    /* slate-700 */
+    border-radius: 6px;
+    padding: 4px 0;
+    min-width: 120px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.15);
+}
+
+.context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: #cbd5e1;
+    /* slate-300 */
+    cursor: pointer;
+    transition: background-color 0.1s;
+}
+
+.context-menu-item:hover {
+    background-color: #334155;
+    /* slate-700 */
+    color: #fff;
+}
+
+.context-menu-item i {
+    width: 14px;
+    height: 14px;
+}

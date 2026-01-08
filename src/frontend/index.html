@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analizador de PCAP v5.0</title>
+    <meta name="author" content="Gabriel Subtil">
+    <meta name="description" content="Analizador de PCAP v5.0">
+    <meta name="keywords" content="PCAP, NG, Analyzer, Gabriel Subtil">
+    <link rel="icon" type="image/png" href="assets/logo.png">
+    <!-- Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com/3.4.1"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="styles.css">
+    <!-- Fallback CSS ->
+    <style>
+        img.w-14 { width: 3.5rem; height: 3.5rem; }
+        .hidden { display: none !important; }
+    </style> -->
+</head>
+
+<body
+    class="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-blue-500 selection:text-white overflow-y-scroll">
+
+    <!-- Header -->
+    <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-10">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <img src="assets/logo.png" class="w-14 h-14 object-contain drop-shadow-sm" alt="Logo">
+                <div class="flex flex-col">
+                    <h1 class="text-xl font-bold tracking-tight text-white leading-tight">PCAP & NG Analyzer <span
+                            class="text-sm font-normal text-slate-500 ml-2">| Versão: 5.0</span></h1>
+                    <p class="text-xs text-slate-500">
+                        Atenciosamente, imaginado por <a href="https://www.instagram.com/subtil/" target="_blank"
+                            rel="noopener"
+                            class="hover:text-blue-400 underline decoration-slate-700 underline-offset-2">Gabriel
+                            Subtil</a>
+                        e feito por Gemini
+                    </p>
+                </div>
+            </div>
+
+            <!-- Navigation Actions (Hidden by default) -->
+            <div id="nav-actions" class="flex gap-2 hidden">
+                <button onclick="app.setView('dashboard')" id="btn-dashboard"
+                    class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-blue-600 text-white">
+                    Dashboard
+                </button>
+                <button onclick="app.setView('strings')" id="btn-strings"
+                    class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-slate-800 text-slate-400 hover:bg-slate-700">
+                    Strings
+                </button>
+                <button onclick="app.setView('dns')" id="btn-dns"
+                    class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-slate-800 text-slate-400 hover:bg-slate-700">
+                    DNS
+                </button>
+                <button onclick="app.setView('threats')" id="btn-threats"
+                    class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-slate-800 text-slate-400 hover:bg-slate-700">
+                    Catálogo
+                </button>
+                <button onclick="app.reset()"
+                    class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-2 text-xs font-medium">
+                    <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                    Novo
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-8">
+
+        <!-- View: Upload Section -->
+        <div id="view-upload"
+            class="flex flex-col items-center justify-center min-h-[60vh] animate-in fade-in zoom-in duration-500">
+            <div class="w-full max-w-lg">
+                <!-- Dropzone -->
+                <div id="dropzone"
+                    class="relative group cursor-pointer border-2 border-dashed border-slate-700 hover:border-slate-500 hover:bg-slate-800/50 rounded-3xl p-12 flex flex-col items-center justify-center text-center transition-all duration-300">
+
+                    <div id="dropzone-icon"
+                        class="w-20 h-20 rounded-2xl flex items-center justify-center mb-6 transition-transform duration-300 group-hover:scale-110 bg-slate-800">
+                        <i data-lucide="upload" class="w-10 h-10 text-slate-400"></i>
+                    </div>
+
+                    <div id="dropzone-content">
+                        <h3 class="text-xl font-semibold text-slate-200 mb-2">PCAP ou PCAPNG</h3>
+                        <p class="text-slate-500 text-sm max-w-xs mx-auto">
+                            Clique para selecionar arquivos para investigar tráfego de rede.
+                            <br />
+                            <span class="text-xs opacity-70">Suporta múltiplos arquivos (Max 50)</span>
+                        </p>
+                    </div>
+
+                    <!-- Selected Files State (Hidden initially) -->
+                    <div id="dropzone-selected" class="hidden">
+                        <h3 id="selected-count" class="text-xl font-semibold text-white mb-2">0 arquivos</h3>
+                        <div id="selected-name" class="mt-2 text-xs text-slate-500 max-w-xs truncate mx-auto"></div>
+                        <button onclick="event.stopPropagation(); app.clearFiles()"
+                            class="mt-4 text-xs text-red-400 hover:text-red-300 underline">
+                            Limpar seleção
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Action Button -->
+                <div class="mt-8 flex flex-col items-center gap-4">
+                    <!-- Progress Bar -->
+                    <div id="progress-container"
+                        class="w-full bg-slate-800 rounded-full h-4 overflow-hidden relative hidden">
+                        <div id="progress-bar" class="bg-blue-500 h-full transition-all duration-300 ease-out"
+                            style="width: 0%"></div>
+                        <span
+                            class="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white tracking-widest">
+                            PROCESSANDO...
+                        </span>
+                    </div>
+
+                    <!-- Process Button -->
+                    <button id="btn-analyze" onclick="app.analyze()" disabled
+                        class="group relative w-full py-4 px-8 rounded-xl font-bold text-lg tracking-wide transition-all duration-300 flex items-center justify-center gap-3 bg-slate-800 text-slate-600 cursor-not-allowed">
+                        <i data-lucide="activity" class="w-5 h-5"></i>
+                        INVESTIGAR TRÁFEGO
+                    </button>
+
+                    <!-- Error Alert -->
+                    <div id="error-alert"
+                        class="hidden flex items-center gap-2 text-red-400 bg-red-400/10 px-4 py-3 rounded-lg text-sm w-full animate-in slide-in-from-bottom-2">
+                        <i data-lucide="alert-triangle" class="w-4 h-4 flex-shrink-0"></i>
+                        <span id="error-msg">Erro</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- View: Report Dashboard -->
+        <div id="view-dashboard" class="hidden animate-in slide-in-from-bottom-8 duration-700">
+            <div class="space-y-6">
+                <!-- GRID FOR ALERTS AND PACKET SIZES -->
+                <div class="grid md:grid-cols-2 gap-6 items-stretch">
+                    <!-- Cards de Ameaças e Tamanhos (Preenchidos via JS) -->
+                    <div id="card-threats-container"></div>
+                    <div id="card-sizes-container"></div>
+                </div>
+
+                <!-- Stats Grid -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="stats-grid">
+                    <!-- Preenchido via JS -->
+                </div>
+
+                <!-- IP Sources -->
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col max-h-80">
+                        <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2 flex-shrink-0">
+                            <i data-lucide="activity" class="w-5 h-5 text-blue-500"></i>
+                            Origem: IPs (Todos)
+                        </h3>
+                        <div id="list-talkers-src" class="space-y-3 overflow-y-auto custom-scrollbar pr-2 flex-grow">
+                        </div>
+                    </div>
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col max-h-80">
+                        <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2 flex-shrink-0">
+                            <i data-lucide="arrow-up-right" class="w-5 h-5 text-blue-400"></i>
+                            Origem: Portas (Todas)
+                        </h3>
+                        <div id="list-ports-src" class="space-y-3 overflow-y-auto custom-scrollbar pr-2 flex-grow">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- IP Destinations -->
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col max-h-80">
+                        <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2 flex-shrink-0">
+                            <i data-lucide="arrow-down-left" class="w-5 h-5 text-purple-500"></i>
+                            Destino: IPs (Todos)
+                        </h3>
+                        <div id="list-talkers-dst" class="space-y-3 overflow-y-auto custom-scrollbar pr-2 flex-grow">
+                        </div>
+                    </div>
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col max-h-80">
+                        <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2 flex-shrink-0">
+                            <i data-lucide="network" class="w-5 h-5 text-purple-500"></i>
+                            Destino: Portas (Todas)
+                        </h3>
+                        <div id="list-ports-dst" class="space-y-3 overflow-y-auto custom-scrollbar pr-2 flex-grow">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- View: Strings -->
+        <div id="view-strings" class="hidden animate-in fade-in">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i data-lucide="file-search" class="w-5 h-5 text-amber-500"></i>
+                        Lista de Strings das Ameaças
+                    </h3>
+                    <span id="strings-count" class="text-xs text-slate-500">0 strings identificadas</span>
+                </div>
+
+                <div id="strings-filters" class="flex flex-wrap gap-[10px] mt-[20px] mb-[15px]"></div>
+
+                <div id="strings-list" class="h-[60vh] overflow-y-auto custom-scrollbar space-y-4 pr-2"></div>
+            </div>
+        </div>
+
+        <!-- View: DNS -->
+        <div id="view-dns" class="hidden animate-in fade-in">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i data-lucide="globe" class="w-5 h-5 text-pink-500"></i>
+                        Tráfego DNS (Porta 53)
+                    </h3>
+                    <span id="dns-count" class="text-xs text-slate-500">0 registros</span>
+                </div>
+
+                <div class="mt-[20px] mb-[15px]">
+                    <p class="text-xs text-slate-500">Agrupado por payload idêntico, ordem decrescente de volume.</p>
+                </div>
+
+                <div id="dns-list" class="h-[60vh] overflow-y-auto custom-scrollbar space-y-4 pr-2"></div>
+            </div>
+        </div>
+
+        <!-- View: Threats Catalog -->
+        <div id="view-threats" class="hidden animate-in fade-in">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                <div class="flex flex-col mb-6">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i data-lucide="list-checks" class="w-5 h-5 text-blue-400"></i>
+                        Catálogo de Ameaças Conhecidas
+                    </h3>
+                    <span id="threats-total-count" class="text-sm font-semibold text-slate-400 mt-2">
+                        Carregando contagem...
+                    </span>
+                    <p class="text-slate-500 text-sm mt-1">
+                        Checklist das regras de detecção ativas.
+                    </p>
+                </div>
+                <div id="threats-catalog-list" class="space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar pr-2">
+                </div>
+            </div>
+        </div>
+
+        <!-- Context Menu -->
+        <div id="custom-context-menu"
+            class="hidden absolute z-50 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 w-48 animate-in fade-in zoom-in-95 duration-100">
+            <button onclick="app.copySelection()"
+                class="w-full text-left px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 hover:text-white flex items-center gap-2">
+                <i data-lucide="copy" class="w-4 h-4"></i>
+                Copiar Seleção
+            </button>
+        </div>
+
+    </main>
+
+    <!-- Scripts -->
+    <script src="app.js"></script>
+    <script>
+        // Inicializa ícones
+        lucide.createIcons();
+    </script>
+</body>
+
+</html>
