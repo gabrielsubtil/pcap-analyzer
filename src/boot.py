@@ -16,6 +16,7 @@ from backend.parser import parse_pcap, parse_pcapng
 from backend.analyzer import analyze_packets
 from backend.consts import get_threat_catalog
 from backend.database import db
+from backend.profiling import profile_performance
 
 class Api:
     def __init__(self):
@@ -39,6 +40,10 @@ class Api:
     def get_string_filter_types(self):
         """Retorna tipos de ameaça disponíveis para filtro."""
         return db.get_string_types()
+    
+    def get_all_strings(self, limit=100, offset=0):
+        """Retorna todas as strings paginadas do SQLite em memória."""
+        return db.get_all_strings(limit, offset)
 
 
     def pick_files(self):
@@ -55,55 +60,40 @@ class Api:
         print(f"Echo from JS: {content}")
         return f"Python recebeu: {content}"
 
+    @profile_performance
     def analyze_files(self, file_paths):
         """
         Recebe lista de caminhos de arquivos, processa e retorna o relatório.
-        Executado em thread separada pelo pywebview se chamado via JS async.
+        Stream-based: Não carrega arquivos na RAM.
         """
+        import itertools
+        
         print(f"Iniciando análise de {len(file_paths)} arquivos...")
-        all_packets = []
-        global_id_counter = 0
-
-        # Magic Numbers
-        PCAP_MAGIC_MICRO_BE = 0xa1b2c3d4
-        PCAP_MAGIC_MICRO_LE = 0xd4c3b2a1
-        PCAP_MAGIC_NANO_BE = 0xa1b23c4d
-        PCAP_MAGIC_NANO_LE = 0x4d3cb2a1
-        PCAPNG_MAGIC = 0x0A0D0D0A
-
-
+        
+        # Geradores de pacotes (um por arquivo)
+        packet_generators = []
 
         try:
             for path in file_paths:
                 if not os.path.exists(path):
                     raise FileNotFoundError(f"Arquivo não encontrado: {path}")
 
-                file_size = os.path.getsize(path)
-                with open(path, 'rb') as f:
-                    # Lê headers globais para tentar identificar formato
-                    header = f.read(4)
-                    f.seek(0)
-                    file_data = f.read()
-                    
-                    # Magic Number check
-                    # PCAP LE: d4 c3 b2 a1
-                    # PCAP BE: a1 b2 c3 d4
-                    # PCAPNG: 0a 0d 0d 0a
-                    
-                    packets = []
-                    if header == b'\n\r\r\n': # PCAPNG
-                        packets = parse_pcapng(file_data)
-                    else:
-                        packets = parse_pcap(file_data)
-                        
-                    all_packets.extend(packets)
+                # Cria o generator para este arquivo (Lazy)
+                # O Scapy só abrirá o arquivo quando iterarmos
+                gen = parse_pcap(path)
+                packet_generators.append(gen)
 
-            print(f"Total de pacotes lidos: {len(all_packets)}. Iniciando análise...")
+            if not packet_generators:
+                 return {'error': 'Nenhum arquivo válido selecionado.'}
+
+            # Encadeia todos os geradores em um único fluxo contínuo
+            all_packets_stream = itertools.chain(*packet_generators)
+
+            print("Iniciando fluxo de análise (Streaming)...")
             
-            if not all_packets:
-                 return {'error': 'Nenhum pacote válido encontrado ou arquivo vazio.'}
-
-            report = analyze_packets(all_packets)
+            # O analyze_packets agora consome o iterador, processando 1 a 1
+            report = analyze_packets(all_packets_stream)
+            
             print("Análise concluída.")
             return report
 
@@ -165,7 +155,7 @@ def main():
     icon_path = os.path.join(assets_dir, 'app.ico')
 
     window = webview.create_window(
-        'PCAP Analyzer v5.0',
+        'PCAP Analyzer v5.1',
         url=index_path,
         js_api=api,
         width=1200,

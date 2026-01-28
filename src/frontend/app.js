@@ -24,7 +24,11 @@ const app = {
         loadedDns: [],
         dnsOffset: 0,
         hasMoreDns: true,
-        isLoadingDns: false
+        isLoadingDns: false,
+        loadedAllStrings: [],
+        allStringsOffset: 0,
+        hasMoreAllStrings: true,
+        isLoadingAllStrings: false
     },
 
     init: async function () {
@@ -270,6 +274,7 @@ const app = {
         document.getElementById('view-strings').classList.add('hidden');
         document.getElementById('view-dns').classList.add('hidden');
         document.getElementById('view-threats').classList.add('hidden');
+        document.getElementById('view-all-strings').classList.add('hidden');
 
         // Show active
         if (mode === 'dashboard') {
@@ -284,13 +289,16 @@ const app = {
         } else if (mode === 'threats') {
             document.getElementById('view-threats').classList.remove('hidden');
             // Já renderizado no init, mas ok
+        } else if (mode === 'all-strings') {
+            document.getElementById('view-all-strings').classList.remove('hidden');
+            this.renderAllStringsView();
         }
 
         // Se report existe, mostra header actions
         if (this.state.report) {
             document.getElementById('nav-actions').classList.remove('hidden');
             // Atualiza botões ativos
-            ['dashboard', 'strings', 'dns', 'threats'].forEach(m => {
+            ['dashboard', 'strings', 'dns', 'threats', 'all-strings'].forEach(m => {
                 const btn = document.getElementById(`btn-${m}`);
                 if (mode === m) {
                     btn.classList.remove('bg-slate-800', 'text-slate-400', 'hover:bg-slate-700');
@@ -316,6 +324,7 @@ const app = {
 
         document.getElementById('view-dashboard').classList.add('hidden');
         document.getElementById('view-strings').classList.add('hidden');
+        document.getElementById('view-all-strings').classList.add('hidden');
         document.getElementById('view-dns').classList.add('hidden');
         document.getElementById('view-threats').classList.add('hidden');
         document.getElementById('view-upload').classList.remove('hidden');
@@ -769,6 +778,89 @@ const app = {
     loadMoreDns: function () {
         if (!this.state.isLoadingDns && this.state.hasMoreDns) {
             this.renderDnsView(true); // append = true
+        }
+    },
+
+    renderAllStringsView: async function (append = false) {
+        if (!this.state.report) return;
+
+        const listEl = document.getElementById('all-strings-list');
+
+        // Se não é append (primeira carga), limpa lista
+        if (!append) {
+            listEl.innerHTML = '<div class="text-center py-10 text-slate-500">Carregando todas as strings...</div>';
+            this.state.loadedAllStrings = [];
+            this.state.allStringsOffset = 0;
+            this.state.hasMoreAllStrings = true;
+        }
+
+        // Fetch Data batch
+        const LIMIT = 50;
+        try {
+            this.state.isLoadingAllStrings = true;
+            const newStrings = await window.pywebview.api.get_all_strings(
+                LIMIT,
+                this.state.allStringsOffset
+            );
+
+            this.state.isLoadingAllStrings = false;
+
+            if (newStrings.length < LIMIT) {
+                this.state.hasMoreAllStrings = false;
+            }
+
+            this.state.loadedAllStrings = append ? [...this.state.loadedAllStrings, ...newStrings] : newStrings;
+            this.state.allStringsOffset += newStrings.length;
+
+            // Build List HTML
+            const itemsHtml = this.state.loadedAllStrings.map((item, idx) => `
+                <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 hover:border-slate-700 transition-colors flex items-center justify-between">
+                    <div class="flex flex-col gap-1 overflow-hidden w-full mr-4">
+                         <div class="bg-slate-900/50 rounded-lg p-2 border border-slate-800/50">
+                            <pre class="text-[11px] text-slate-300 font-mono whitespace-pre-wrap break-all overflow-hidden leading-relaxed select-text">"${item.payload}"</pre>
+                        </div>
+                    </div>
+                    
+                    <div class="flex flex-col items-end min-w-[60px] flex-shrink-0">
+                        <span class="text-xs font-bold text-white">${item.count}</span>
+                        <span class="text-[10px] text-slate-600">pkts</span>
+                    </div>
+                </div>
+            `).join('');
+
+            // Container Update
+            if (this.state.loadedAllStrings.length > 0) {
+                listEl.innerHTML = itemsHtml;
+
+                // Append Load More Button
+                if (this.state.hasMoreAllStrings) {
+                    const btnMore = document.createElement('div');
+                    btnMore.className = "text-center pt-4";
+                    btnMore.innerHTML = `
+                        <button onclick="app.loadMoreAllStrings()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-sm transition-colors">
+                            Carregar mais...
+                        </button>
+                     `;
+                    listEl.appendChild(btnMore);
+                }
+
+                document.getElementById('all-strings-count').innerText = `${this.state.loadedAllStrings.length}${this.state.hasMoreAllStrings ? '+' : ''} strings exibidas`;
+
+            } else {
+                listEl.innerHTML = `<div class="text-center py-20 text-slate-600">Nenhuma string encontrada.</div>`;
+                document.getElementById('all-strings-count').innerText = `0 strings`;
+            }
+
+        } catch (e) {
+            console.error("Erro ao buscar todas as strings:", e);
+            listEl.innerHTML = `<div class="text-center py-10 text-red-500">Erro ao carregar dados.</div>`;
+        }
+        lucide.createIcons();
+    },
+
+    loadMoreAllStrings: function () {
+        if (!this.state.isLoadingAllStrings && this.state.hasMoreAllStrings) {
+            this.renderAllStringsView(true); // append = true
         }
     },
 

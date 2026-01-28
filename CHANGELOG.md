@@ -6,6 +6,13 @@ Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/), e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+### [5.1.0] - 2026-01-28
+
+#### Adicionado
+
+- **Todas as Strings:** Nova aba para visualizar todas as strings ASCII imprimíveis extraídas de todos os pacotes, independentemente de serem consideradas ameaças.
+- **Botão "Todas as Strings":** Adicionado ao cabeçalho para acesso rápido à nova funcionalidade.
+
 ### [5.0.0] - 2026-01-08
 
 #### Adicionado
@@ -122,6 +129,13 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/).
+
+### [5.1.0] - 2026-01-28
+
+#### Added
+
+- **All Strings:** New tab to visualize all printable ASCII strings extracted from all packets, regardless of whether they are considered threats.
+- **"All Strings" Button:** Added to the header for quick access to the new functionality.
 
 ### [5.0.0] - 2026-01-08
 

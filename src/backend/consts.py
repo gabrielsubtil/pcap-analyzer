@@ -11,7 +11,7 @@ THREAT_SIGNATURES = [
     'logic': 'Payload matches regex: /(sqlmap|nikto|masscan|nmap|brup)/i'
   },
   { 
-    'regex': re.compile(b'(eval\(|base64_decode\(|system\(|shell_exec\()', re.I), 
+    'regex': re.compile(br'(eval\(|base64_decode\(|system\(|shell_exec\()', re.I), 
     'type': 'Webshells PHP Comuns', 
     'desc': 'Execução de funções críticas PHP (Backdoors).', 
     'explanation': 'Detecta funções PHP perigosas comumente usadas em webshells para executar comandos do sistema operacional ou ofuscar código malicioso.',
@@ -25,14 +25,14 @@ THREAT_SIGNATURES = [
     'logic': 'Payload matches regex: /Authorization: Basic/i'
   },
   { 
-    'regex': re.compile(b'alert\(|script>', re.I), 
+    'regex': re.compile(br'alert\(|script>', re.I), 
     'type': 'XSS', 
     'desc': 'Injeção de scripts maliciosos detectada.', 
     'explanation': 'Tentativa de injetar código JavaScript em páginas web. Pode permitir roubo de sessão, redirecionamentos ou execução de ações em nome do usuário.',
     'logic': 'Payload matches regex: /alert\\(|script>/i'
   },
   { 
-    'regex': re.compile(b'\/bin\/sh|\/bin\/bash|cmd\.exe', re.I), 
+    'regex': re.compile(br'\/bin\/sh|\/bin\/bash|cmd\.exe', re.I), 
     'type': 'RCE', 
     'desc': 'Chamadas diretas ao shell do sistema.', 
     'explanation': 'Tentativa crítica de invocar o interpretador de comandos do SO. Geralmente indica exploração bem-sucedida ou tentativa direta de controle do servidor.',

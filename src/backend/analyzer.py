@@ -5,18 +5,20 @@ import re
 from collections import defaultdict
 from .consts import THREAT_SIGNATURES, TRAFFIC_RULES, SUSPICIOUS_PORTS
 from .database import db
+from .profiling import profile_performance
 
+@profile_performance
 def analyze_packets(packets):
     """
-    Analisa uma lista de pacotes processados e retorna um relatório completo.
+    Analisa um gerador (ou iterável) de pacotes e retorna um relatório completo.
     Utiliza SQLite em memória para armazenar objetos grandes (strings).
     """
     # 1. Limpa banco de dados anterior
     db.clear_data()
 
     report = {
-        'totalPackets': len(packets),
-        'totalBytes': sum(p['length'] for p in packets),
+        'totalPackets': 0,
+        'totalBytes': 0,
         'uniqueIps': set(),
         'uniqueSrcIpsCount': 0,
         'uniqueDstIpsCount': 0,
@@ -40,6 +42,7 @@ def analyze_packets(packets):
     
     # Buffer para inserção em massa no SQLite
     threat_string_buffer = {} # Dedup buffer before DB
+    all_strings_buffer = {} # Buffer para TODAS as strings
     dns_buffer = {} # Dedup buffer for DNS
 
     # DNS Types Map
@@ -57,7 +60,8 @@ def analyze_packets(packets):
             }
         threat_map[key]['count'] += 1
 
-    def add_threat_string(t_type, desc, explanation, payload):
+    def extract_printable_string(payload):
+        """Extrai string ASCII legível de um payload."""
         text = ""
         if payload:
             if isinstance(payload, bytes):
@@ -65,12 +69,39 @@ def analyze_packets(packets):
             else:
                 text = str(payload)
             
-            # Sanitiza
+            # Sanitiza: Substitui não-imprimíveis por ponto
             text = re.sub(r'[^\x20-\x7E]', '.', text)
             
-        if not text or len(text) < 3 or (len(text) > 10 and text.count('.') > len(text) * 0.8):
-             text = "[Nenhum payload ASCII legível detectado]"
-        elif not any(c.isalnum() for c in text): 
+            # Validação simples para evitar falso positivo de binário puro como string
+            # Deve ter pelo menos 3 caracteres
+            if not text or len(text) < 3:
+                return None
+            
+            # Se tiver muitos pontos (ex: 80%), provavel que seja binário
+            if len(text) > 10 and text.count('.') > len(text) * 0.8:
+                return None
+                
+            if not any(c.isalnum() for c in text): 
+                 return None
+                 
+            return text
+        return None
+
+    def add_all_strings(payload):
+        text = extract_printable_string(payload)
+        if text:
+            # Chave é o próprio texto
+            if text not in all_strings_buffer:
+                all_strings_buffer[text] = {
+                    'payload': text,
+                    'count': 0
+                }
+            all_strings_buffer[text]['count'] += 1
+
+    def add_threat_string(t_type, desc, explanation, payload):
+        text = extract_printable_string(payload)
+            
+        if not text:
              text = "[Nenhum payload ASCII legível detectado]"
 
         key = f"{t_type}-{text}"
@@ -141,7 +172,7 @@ def analyze_packets(packets):
             qtype_str = DNS_TYPES.get(qtype_val, f"TYPE{qtype_val}")
             
             return tx_id_hex, qname, qtype_str
-
+        
         except Exception:
             return None, None, None
 
@@ -163,6 +194,13 @@ def analyze_packets(packets):
         dns_buffer[key]['count'] += 1
 
     for p in packets:
+        report['totalPackets'] += 1
+        report['totalBytes'] += p['length']
+        
+        # Extrai strings de TODOS os pacotes (All Strings Feature)
+        if p['payload']:
+            add_all_strings(p['payload'])
+
         # DNS Logic (Port 53) - Process FIRST but ALLOW flow to general stats
         if p['srcPort'] == 53 or p['dstPort'] == 53:
             add_dns_record(p['payload'])
@@ -200,10 +238,6 @@ def analyze_packets(packets):
             if not criteria:
                 continue
             
-            # ... rest of the loop logic is unchanged in essence, but including it for context matching if needed ...
-            # To minimize churn I will just insert the DNS check above and keep existing logic.
-            # But replace_file_content needs contiguous block. 
-            # I will include the rule loop start to anchor.
             
             if 'src_port_not' in criteria:
                 if p['srcPort'] == criteria['src_port_not']:
@@ -274,6 +308,9 @@ def analyze_packets(packets):
     
     if dns_buffer:
         db.insert_dns_bulk(list(dns_buffer.values()))
+    
+    if all_strings_buffer:
+        db.insert_all_strings_bulk(list(all_strings_buffer.values()))
     
     # report['threatStrings'] permanece VAZIO [] para não pesar o JSON.
     # O Frontend buscará via API get_strings()

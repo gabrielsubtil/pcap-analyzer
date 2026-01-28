@@ -38,6 +38,14 @@ class DatabaseManager:
                 count INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_query_name ON dns_records(query_name);
+
+            DROP TABLE IF EXISTS all_strings;
+            CREATE TABLE all_strings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                payload TEXT,
+                count INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_all_payload ON all_strings(payload);
         ''')
         self.conn.commit()
 
@@ -45,6 +53,7 @@ class DatabaseManager:
         """Limpa todos os dados para uma nova análise."""
         self.cursor.execute("DELETE FROM threats_strings")
         self.cursor.execute("DELETE FROM dns_records")
+        self.cursor.execute("DELETE FROM all_strings")
         self.conn.commit()
 
     def insert_strings_bulk(self, strings_list):
@@ -80,6 +89,20 @@ class DatabaseManager:
         self.cursor.executemany('''
             INSERT INTO dns_records (transaction_id, query_name, query_type, count)
             VALUES (?, ?, ?, ?)
+        ''', data)
+        self.conn.commit()
+
+    def insert_all_strings_bulk(self, strings_list):
+        """Insere lista de todas as strings detectadas.
+           strings_list: lista de dicionários {'payload', 'count'}
+        """
+        if not strings_list:
+            return
+
+        data = [ (s['payload'], s['count']) for s in strings_list ]
+        
+        self.cursor.executemany('''
+            INSERT INTO all_strings (payload, count) VALUES (?, ?)
         ''', data)
         self.conn.commit()
 
@@ -120,6 +143,22 @@ class DatabaseManager:
                 'queryName': r[1],
                 'queryType': r[2],
                 'count': r[3]
+            }
+            for r in rows
+        ]
+    
+    def get_all_strings(self, limit=100, offset=0):
+        """Retorna todas as strings paginadas, ordenadas por ocorrência."""
+        query = "SELECT payload, count FROM all_strings ORDER BY count DESC LIMIT ? OFFSET ?"
+        params = (limit, offset)
+        
+        self.cursor.execute(query, params)
+        rows = self.cursor.fetchall()
+        
+        return [
+            {
+                'payload': r[0],
+                'count': r[1]
             }
             for r in rows
         ]

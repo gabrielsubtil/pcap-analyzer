@@ -71,53 +71,33 @@ def process_scapy_packet(pkt, packet_id):
         # print(f"Erro processando pacote {packet_id}: {e}")
         return None
 
-def parse_pcap(file_bytes_or_path):
+def parse_pcap(file_path):
     """
-    Lê arquivo PCAP/PCAPNG usando Scapy.
-    Aceita caminho do arquivo (preferível para streaming) ou bytes (via buffer).
+    Lê arquivo PCAP/PCAPNG usando Scapy em modo Streaming (Generator).
+    Recebe caminho do arquivo para performance ideal.
     """
-    packets = []
-    
-    # Se receber bytes (do upload via pywebview), precisamos salvar temporariamente
-    # ou usar bytesio, mas Scapy costuma querer arquivo para PcapReader (streaming).
-    # Com rdpcap aceita BytesIO, mas carrega tudo na RAM.
-    # Dado que "file_bytes" vem do ler_pcap no boot.py que lê tudo pra memória:
-    # Vamos manter a leitura de bytes mas passar para o Scapy.
-    
-    # NOTA: O fluxo atual lê o arquivo inteiro em memória no Python antes de chamar parse_pcap.
-    # Para performance ideal com Scapy e arquivos grandes, o ideal seria passar o PATH.
-    # Mas como o parser.py recebe "file_bytes", vamos adaptar.
-    
-    import io
+    # Importação dentro da função para evitar custo de carga inicial se não usado
     from scapy.utils import PcapReader as ScapyPcapReader
-    from scapy.utils import PcapNgReader as ScapyPcapNgReader
-    
-    # Detecção básica de Magic Number para diferenciar PCAP/NG se necessário,
-    # ou deixar o Scapy tentar detectar via rdpcap que é genérico.
+    from scapy.error import Scapy_Exception
+
+    packet_id = 1
     
     try:
-        # Criar um arquivo virtual em memória
-        mem_file = io.BytesIO(file_bytes_or_path)
-        
-        # rdpcap lê tudo de uma vez. Para 5000 pacotes é ok.
-        # Para gigabytes, travaria.
-        # Usuário pediu "Bibliotecas Padrão" e "Confiabilidade".
-        # Scapy rdpcap lida com PCAP e PCAPNG automaticamente.
-        
-        scapy_packets = rdpcap(mem_file)
-        
-        packet_id = 1
-        for pkt in scapy_packets:
-            parsed = process_scapy_packet(pkt, packet_id)
-            if parsed:
-                packets.append(parsed)
-                packet_id += 1
-                
-        return packets
-        
+        # PcapReader do Scapy detecta automaticamente se é pcap ou pcapng
+        # e lê pacote por pacote do disco (Iterador).
+        with ScapyPcapReader(file_path) as pcap_reader:
+            for pkt in pcap_reader:
+                parsed = process_scapy_packet(pkt, packet_id)
+                if parsed:
+                    yield parsed
+                    packet_id += 1
+                    
+    except Scapy_Exception as e:
+        print(f"Erro Scapy (arquivo pode estar corrompido ou incompleto): {e}")
     except Exception as e:
-        print(f"Erro no Scapy Parse: {e}")
-        return []
+        print(f"Erro Genérico no Parse PCAP: {e}")
+        # Em generators, exceções interrompem o loop. 
+        # Podemos logar e terminar graciosamente para que o analisador aproveite o que já leu.
 
 # Alias para compatibilidade, já que rdpcap resolve ambos
 def parse_pcapng(file_bytes):
