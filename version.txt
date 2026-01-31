@@ -1,6 +1,6 @@
 Nome da Aplicação: Analizador de PCAP
 Author: Gabriel Subtil
-Versão: 5.1
+Versão: 5.2
 Linsença: PolyForm Shield License 1.0.0
 
 [Informações Extras para PyInstaller/Windows]

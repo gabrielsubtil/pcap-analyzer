@@ -155,7 +155,7 @@ def main():
     icon_path = os.path.join(assets_dir, 'app.ico')
 
     window = webview.create_window(
-        'PCAP Analyzer v5.1',
+        'PCAP Analyzer v5.2',
         url=index_path,
         js_api=api,
         width=1200,
@@ -170,7 +170,7 @@ def main():
     
     # Inicia o loop da interface gráfica
     # debug=False remove o menu de contexto nativo (Inspect, etc)
-    webview.start(debug=False, http_server=True, icon=icon_path if os.path.exists(icon_path) else None)
+    webview.start(debug=True, http_server=True, icon=icon_path if os.path.exists(icon_path) else None)
 
 if __name__ == '__main__':
     main()

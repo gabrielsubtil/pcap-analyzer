@@ -32,7 +32,7 @@
                 <div class="flex flex-col">
                     <h1 class="text-xl font-bold tracking-tight text-white leading-tight">PCAP & NG Analyzer <span
                             class="text-sm font-normal text-slate-500 ml-2">| Versão: 5.1</span></h1>
-                    <p class="text-xs text-slate-500">
+                    <p class="text-xs text-slate-500" style="margin-top: 8px;">
                         Atenciosamente, imaginado por <a href="https://www.instagram.com/subtil/" target="_blank"
                             rel="noopener"
                             class="hover:text-blue-400 underline decoration-slate-700 underline-offset-2">Gabriel
@@ -48,17 +48,34 @@
                     class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-blue-600 text-white">
                     Dashboard
                 </button>
-                <button onclick="app.setView('strings')" id="btn-strings"
+                <!-- Strings Dropdown -->
+                <div class="relative group">
+                    <button id="btn-strings-group"
+                        class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-slate-800 text-slate-400 hover:bg-slate-700 flex items-center gap-2">
+                        Strings
+                        <i data-lucide="chevron-down" class="w-3 h-3"></i>
+                    </button>
+                    <div class="hidden group-hover:block absolute top-full left-0 pt-1 w-48 z-50">
+                        <div class="bg-slate-900 border border-slate-700 rounded-lg shadow-xl py-1">
+                            <button onclick="app.setView('strings')" id="btn-strings"
+                                class="w-full text-left px-4 py-2 text-xs font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-colors">
+                                Strings (Ameaças)
+                            </button>
+                            <button onclick="app.setView('all-strings')" id="btn-all-strings"
+                                class="w-full text-left px-4 py-2 text-xs font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-colors">
+                                Todas as Strings
+                            </button>
+                            <button onclick="app.setView('dns')" id="btn-dns"
+                                class="w-full text-left px-4 py-2 text-xs font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-colors">
+                                DNS
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <!-- Whois Link -->
+                <button onclick="app.setView('whois')" id="btn-whois"
                     class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-slate-800 text-slate-400 hover:bg-slate-700">
-                    Strings (Ameaças)
-                </button>
-                <button onclick="app.setView('all-strings')" id="btn-all-strings"
-                    class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-slate-800 text-slate-400 hover:bg-slate-700">
-                    Todas as Strings
-                </button>
-                <button onclick="app.setView('dns')" id="btn-dns"
-                    class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-slate-800 text-slate-400 hover:bg-slate-700">
-                    DNS
+                    Whois
                 </button>
                 <button onclick="app.setView('threats')" id="btn-threats"
                     class="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors bg-slate-800 text-slate-400 hover:bg-slate-700">
@@ -248,6 +265,41 @@
                 </div>
 
                 <div id="dns-list" class="h-[60vh] overflow-y-auto custom-scrollbar space-y-4 pr-2"></div>
+            </div>
+        </div>
+
+        <!-- View: Whois -->
+        <div id="view-whois" class="hidden animate-in fade-in">
+            <div class="space-y-6">
+                <!-- Source IPs -->
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                            <i data-lucide="arrow-up-right" class="w-5 h-5 text-blue-500"></i>
+                            Endereços de Origem (Whois)
+                        </h3>
+                        <span id="whois-src-count" class="text-xs text-slate-500">0 endereços</span>
+                    </div>
+                    <div class="mt-4">
+                        <div id="whois-src-list" class="space-y-3 max-h-[50vh] overflow-y-auto custom-scrollbar pr-2">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Destination IPs -->
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                            <i data-lucide="arrow-down-left" class="w-5 h-5 text-purple-500"></i>
+                            Endereços de Destino (Whois)
+                        </h3>
+                        <span id="whois-dst-count" class="text-xs text-slate-500">0 endereços</span>
+                    </div>
+                    <div class="mt-4">
+                        <div id="whois-dst-list" class="space-y-3 max-h-[50vh] overflow-y-auto custom-scrollbar pr-2">
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 

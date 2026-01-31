@@ -28,11 +28,39 @@ const app = {
         loadedAllStrings: [],
         allStringsOffset: 0,
         hasMoreAllStrings: true,
-        isLoadingAllStrings: false
+        isLoadingAllStrings: false,
+        loadedAllStrings: [],
+        allStringsOffset: 0,
+        hasMoreAllStrings: true,
+        isLoadingAllStrings: false,
+        ipCache: {},
+        ipQueue: [],
+        isProcessingQueue: false,
+        ipProgress: {
+            current: 0,
+            total: 0
+        },
+        whoisSrcOffset: 0,
+        whoisDstOffset: 0,
+        whoisLimits: { src: 10, dst: 10 },
+        connectionError: false
     },
 
     init: async function () {
         console.log("App initialized");
+
+        // Create Tooltip
+        const tooltip = document.createElement('div');
+        tooltip.id = 'ip-tooltip';
+        document.body.appendChild(tooltip);
+
+        const toast = document.createElement('div');
+        toast.id = 'ip-progress-toast';
+        toast.innerHTML = '<div class="spinner"></div><span id="ip-progress-text">Carregando informações...</span>';
+        document.body.appendChild(toast);
+
+        document.addEventListener('mousemove', (e) => this.updateTooltipPosition(e));
+
         this.bindEvents();
         // Carrega catalogo do backend assim que a bridge estiver pronta
         window.addEventListener('pywebviewready', async () => {
@@ -276,6 +304,8 @@ const app = {
         document.getElementById('view-threats').classList.add('hidden');
         document.getElementById('view-all-strings').classList.add('hidden');
 
+        document.getElementById('view-whois').classList.add('hidden');
+
         // Show active
         if (mode === 'dashboard') {
             document.getElementById('view-dashboard').classList.remove('hidden');
@@ -292,13 +322,17 @@ const app = {
         } else if (mode === 'all-strings') {
             document.getElementById('view-all-strings').classList.remove('hidden');
             this.renderAllStringsView();
+        } else if (mode === 'whois') {
+            document.getElementById('view-whois').classList.remove('hidden');
+            this.renderWhoisView();
         }
 
         // Se report existe, mostra header actions
         if (this.state.report) {
             document.getElementById('nav-actions').classList.remove('hidden');
             // Atualiza botões ativos
-            ['dashboard', 'strings', 'dns', 'threats', 'all-strings'].forEach(m => {
+            // Top Level Buttons
+            ['dashboard', 'threats', 'whois'].forEach(m => {
                 const btn = document.getElementById(`btn-${m}`);
                 if (mode === m) {
                     btn.classList.remove('bg-slate-800', 'text-slate-400', 'hover:bg-slate-700');
@@ -308,6 +342,39 @@ const app = {
                     btn.classList.remove('bg-blue-600', 'text-white');
                 }
             });
+
+            // Strings Dropdown Logic
+            const stringsGroup = document.getElementById('btn-strings-group');
+            const strBtn = document.getElementById('btn-strings');
+            const allStrBtn = document.getElementById('btn-all-strings');
+            const dnsBtn = document.getElementById('btn-dns');
+
+            // Reset dropdown items
+            [strBtn, allStrBtn, dnsBtn].forEach(btn => {
+                btn.classList.remove('text-white', 'bg-slate-800'); // Active style inside dropdown
+                btn.classList.add('text-slate-400');
+            });
+
+            // Highlight Parent Group
+            if (mode === 'strings' || mode === 'all-strings' || mode === 'dns') {
+                stringsGroup.classList.remove('bg-slate-800', 'text-slate-400', 'hover:bg-slate-700');
+                stringsGroup.classList.add('bg-blue-600', 'text-white');
+
+                // Highlight Specific Child
+                if (mode === 'strings') {
+                    strBtn.classList.remove('text-slate-400');
+                    strBtn.classList.add('text-white', 'bg-slate-800');
+                } else if (mode === 'all-strings') {
+                    allStrBtn.classList.remove('text-slate-400');
+                    allStrBtn.classList.add('text-white', 'bg-slate-800');
+                } else if (mode === 'dns') {
+                    dnsBtn.classList.remove('text-slate-400');
+                    dnsBtn.classList.add('text-white', 'bg-slate-800');
+                }
+            } else {
+                stringsGroup.classList.add('bg-slate-800', 'text-slate-400', 'hover:bg-slate-700');
+                stringsGroup.classList.remove('bg-blue-600', 'text-white');
+            }
         }
         lucide.createIcons();
     },
@@ -316,6 +383,12 @@ const app = {
         this.state.files = [];
         this.state.report = null;
         this.state.stringFilter = null;
+        this.state.ipCache = {};
+        this.state.ipQueue = [];
+        this.state.ipProgress = { current: 0, total: 0 };
+        this.state.connectionError = false;
+        this.state.whoisSrcOffset = 0;
+        this.state.whoisDstOffset = 0;
 
         document.getElementById('nav-actions').classList.add('hidden');
         document.getElementById('btn-analyze').classList.remove('hidden');
@@ -327,8 +400,10 @@ const app = {
         document.getElementById('view-all-strings').classList.add('hidden');
         document.getElementById('view-dns').classList.add('hidden');
         document.getElementById('view-threats').classList.add('hidden');
+        document.getElementById('view-whois').classList.add('hidden');
         document.getElementById('view-upload').classList.remove('hidden');
 
+        this.renderIpProgress(false); // Ensure toast is hidden
         this.renderUploadState();
     },
 
@@ -498,11 +573,28 @@ const app = {
         const hasMore = items.length > limit;
         const visibleItems = items.slice(0, limit);
 
-        let html = visibleItems.map(([label, count], idx) => `
+        // Generic Batch IP Fetching Logic
+        // Collect potential IPs from the current list
+        // Explicitly trim and validate
+        const ipsToFetch = visibleItems
+            .map(item => String(item[0]).trim())
+            .filter(ip => this.isValidIp(ip) && !this.state.ipCache[ip]);
+
+        if (ipsToFetch.length > 0) {
+            const uniqueIps = [...new Set(ipsToFetch)];
+            this.fetchIpBatch(uniqueIps);
+        }
+
+        let html = visibleItems.map(([rawLabel, count], idx) => {
+            const label = String(rawLabel).trim();
+            // Check if label is IP
+            const isIp = this.isValidIp(label);
+            const hoverAttrs = isIp ? `onmouseenter="app.showIpTooltip(event, '${label}')" onmouseleave="app.hideTooltip()"` : '';
+            return `
              <div class="flex items-center justify-between group">
                 <div class="flex items-center gap-3">
                     <span class="text-slate-600 font-mono text-sm w-8 text-right">${idx + 1}</span>
-                    <div class="font-mono text-slate-300 group-hover:${colorClass} transition-colors">${label}</div>
+                    <div class="font-mono text-slate-300 group-hover:${colorClass} transition-colors ${isIp ? 'cursor-help' : ''}" ${hoverAttrs}>${label}</div>
                 </div>
                 <div class="flex items-center gap-3">
                     <div class="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
@@ -511,7 +603,7 @@ const app = {
                     <span class="text-xs text-slate-500 font-mono w-12 text-right">${count}</span>
                 </div>
              </div>
-        `).join('');
+        `}).join('');
 
         if (hasMore) {
             html += `
@@ -524,6 +616,113 @@ const app = {
         }
 
         el.innerHTML = html;
+    },
+
+    isValidIp: function (ip) {
+        if (!ip || typeof ip !== 'string') return false;
+        const cleanIp = ip.trim();
+        // Regex IPv4 simples
+        return /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(cleanIp);
+    },
+
+    fetchIpBatch: async function (ips) {
+        // Filter out IPs already in cache or already in queue
+        const newIps = ips.filter(ip =>
+            !this.state.ipCache[ip] &&
+            !this.state.ipQueue.includes(ip)
+        );
+
+        if (newIps.length === 0) return;
+
+        // Mark as loading immediately to prevent UI from re-queueing
+        newIps.forEach(ip => {
+            this.state.ipCache[ip] = { status: 'loading' };
+        });
+
+        // Add to queue
+        this.state.ipQueue.push(...newIps);
+
+        // Update total for this batch/session
+        this.state.ipProgress.total += newIps.length;
+        this.renderIpProgress(true);
+
+        this.processIpQueue();
+    },
+
+    showIpTooltip: function (e, ip) {
+        const tooltip = document.getElementById('ip-tooltip');
+        if (!tooltip) return;
+
+        const data = this.state.ipCache[ip];
+
+        // 1. Gera Conteúdo (Render Content)
+        if (!data || data.status === 'loading') {
+            tooltip.innerHTML = '<span class="text-slate-500 italic">Carregando...</span>';
+        } else if (data.status === 'fail') {
+            tooltip.innerHTML = '<span class="text-red-400">Erro: ' + (data.message || 'Falha') + '</span>';
+        } else {
+            // Lógica de Deduplicação de Organização
+            const country = data.country || 'N/A';
+            const org = (data.org || 'N/A').trim();
+            const asRaw = (data.as || '').trim();
+
+            const asParts = asRaw.split(' ');
+            const asNumber = asParts[0];
+
+            let content = `${country}`;
+
+            if (org !== 'N/A') {
+                content += ` | ${org}`;
+            }
+
+            if (asRaw && asRaw !== 'N/A') {
+                const isAsNum = /^AS\d+/i.test(asNumber);
+
+                if (isAsNum) {
+                    content += ` | ${asNumber}`;
+                } else {
+                    if (asRaw.toLowerCase() !== org.toLowerCase() && !asRaw.toLowerCase().includes(org.toLowerCase())) {
+                        content += ` | ${asRaw}`;
+                    }
+                }
+            }
+
+            tooltip.innerHTML = content;
+        }
+
+        tooltip.style.display = 'block';
+        this.updateTooltipPosition(e);
+    },
+
+    updateTooltipPosition: function (e) {
+        const tooltip = document.getElementById('ip-tooltip');
+        if (!tooltip || tooltip.style.display === 'none') return;
+
+        const rect = tooltip.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight; // Not used but good to have
+
+        let x = e.clientX + 15;
+        let y = e.clientY - rect.height - 15; // Acima do cursor
+
+        // Colisões (Boundary checks)
+        // Horizontal
+        if (x + rect.width > viewportWidth) {
+            x = e.clientX - rect.width - 15; // Flip esquerda
+        }
+
+        // Vertical (Se sair por cima, inverte para baixo)
+        if (y < 0) {
+            y = e.clientY + 25;
+        }
+
+        tooltip.style.left = x + 'px';
+        tooltip.style.top = y + 'px';
+    },
+
+    hideTooltip: function () {
+        const tooltip = document.getElementById('ip-tooltip');
+        if (tooltip) tooltip.style.display = 'none';
     },
 
     renderPorts: function (elementId, portStats, limitType) {
@@ -723,15 +922,25 @@ const app = {
             this.state.loadedDns = append ? [...this.state.loadedDns, ...newRecords] : newRecords;
             this.state.dnsOffset += newRecords.length;
 
+            // Batch check IPs in DNS view
+            const ipsInDns = this.state.loadedDns.map(i => i.queryName).filter(q => this.isValidIp(q) && !this.state.ipCache[q]);
+            if (ipsInDns.length > 0) {
+                const unique = [...new Set(ipsInDns)];
+                this.fetchIpBatch(unique);
+            }
+
             // Build List HTML
-            const itemsHtml = this.state.loadedDns.map(item => `
+            const itemsHtml = this.state.loadedDns.map(item => {
+                const isIp = this.isValidIp(item.queryName);
+                const hoverAttrs = isIp ? `onmouseenter="app.showIpTooltip(event, '${item.queryName}')" onmouseleave="app.hideTooltip()"` : '';
+                return `
                 <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 hover:border-slate-700 transition-colors flex items-center justify-between">
                     <div class="flex flex-col gap-1 overflow-hidden">
                         <div class="flex items-center gap-2">
                              <div class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-pink-500/20 text-pink-400 min-w-[35px] text-center">
                                 ${item.queryType}
                              </div>
-                             <span class="text-sm font-bold text-slate-200 truncate font-mono" title="${item.queryName}">${item.queryName}</span>
+                             <span class="text-sm font-bold text-slate-200 truncate font-mono ${isIp ? 'cursor-help' : ''}" title="${item.queryName}" ${hoverAttrs}>${item.queryName}</span>
                         </div>
                         <div class="text-[10px] text-slate-500 font-mono ml-1">
                             Transação: ${item.transactionId || 'N/A'}
@@ -743,7 +952,7 @@ const app = {
                         <span class="text-[10px] text-slate-600">queries</span>
                     </div>
                 </div>
-            `).join('');
+            `}).join('');
 
             // Container Update
             if (this.state.loadedDns.length > 0) {
@@ -894,6 +1103,146 @@ const app = {
         lucide.createIcons();
     },
 
+    renderWhoisView: function (refresh = false) {
+        if (!this.state.report) return;
+
+        const viewEl = document.getElementById('view-whois');
+
+        // Error Banner
+        const existingBanner = document.getElementById('whois-error-banner');
+        if (this.state.connectionError) {
+            if (!existingBanner) {
+                const banner = document.createElement('div');
+                banner.id = 'whois-error-banner';
+                banner.className = 'bg-red-500/10 border border-red-500/20 rounded-xl p-4 mb-6 flex items-center justify-between animate-in fade-in slide-in-from-top-2';
+                banner.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <i data-lucide="wifi-off" class="w-5 h-5 text-red-400"></i>
+                        <div>
+                            <div class="text-sm font-bold text-red-400">Falha na conexão</div>
+                            <div class="text-xs text-slate-500">Não foi possível buscar informações dos IPs. Verifique sua internet.</div>
+                        </div>
+                    </div>
+                    <button onclick="app.retryConnection()" class="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-xs font-bold transition-colors flex items-center gap-2">
+                        <i data-lucide="refresh-cw" class="w-3 h-3"></i> Tentar Novamente
+                    </button>
+                `;
+                viewEl.prepend(banner);
+            }
+        } else {
+            if (existingBanner) existingBanner.remove();
+        }
+
+        // Reset limits if switching view (implied by call from setView without args, but let's be explicit manually if needed)
+        // Here we just render based on current limits
+
+        this.renderWhoisList('whois-src-list', this.state.report.topTalkers, 'src');
+        this.renderWhoisList('whois-dst-list', this.state.report.topDestinations, 'dst');
+
+        document.getElementById('whois-src-count').innerText = `${Math.min(this.state.whoisLimits.src, this.state.report.topTalkers.length)} de ${this.state.report.topTalkers.length}`;
+        document.getElementById('whois-dst-count').innerText = `${Math.min(this.state.whoisLimits.dst, this.state.report.topDestinations.length)} de ${this.state.report.topDestinations.length}`;
+
+        lucide.createIcons();
+    },
+
+    retryConnection: function () {
+        this.state.connectionError = false;
+        this.renderWhoisView(); // Remove banner
+        this.processIpQueue(); // Resume
+    },
+
+    renderWhoisList: function (elId, items, type) {
+        const el = document.getElementById(elId);
+        const limit = this.state.whoisLimits[type];
+        const visibleItems = items.slice(0, limit);
+        const hasMore = items.length > limit;
+
+        // Batch Fetch
+        const ipsToFetch = visibleItems
+            .map(item => String(item[0]).trim())
+            .filter(ip => this.isValidIp(ip) && !this.state.ipCache[ip]);
+
+        if (ipsToFetch.length > 0) {
+            this.fetchIpBatch([...new Set(ipsToFetch)]);
+        }
+
+        let html = visibleItems.map(([ip, count]) => {
+            const cleanIp = String(ip).trim();
+            const whoisHtml = this.getWhoisInfoHtml(cleanIp);
+
+            return `
+            <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 hover:border-slate-700 transition-colors" id="whois-card-${cleanIp}">
+                <div class="flex flex-col gap-2">
+                    <div class="text-xs text-slate-500 font-mono font-bold tracking-wider uppercase border-b border-slate-800/50 pb-1" id="whois-info-${cleanIp}">
+                        ${whoisHtml}
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <div class="text-lg font-mono text-slate-200 font-bold">${cleanIp}</div>
+                        <div class="flex flex-col items-end">
+                             <span class="text-sm font-bold text-white">${count}</span>
+                             <span class="text-[10px] text-slate-600 uppercase">pacotes</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            `;
+        }).join('');
+
+        if (hasMore) {
+            html += `
+                <div class="pt-2 text-center">
+                    <button onclick="app.loadMoreWhois('${type}')" class="text-xs text-blue-400 hover:text-blue-300 transition-colors bg-blue-500/10 hover:bg-blue-500/20 px-3 py-1 rounded font-medium w-full">
+                        Carregar mais 10...
+                    </button>
+                </div>
+            `;
+        }
+
+        el.innerHTML = html;
+    },
+
+    loadMoreWhois: function (type) {
+        this.state.whoisLimits[type] += 10;
+        this.renderWhoisView();
+    },
+
+    getWhoisInfoHtml: function (ip) {
+        const data = this.state.ipCache[ip];
+        if (!data || data.status === 'loading') return '<span class="italic opacity-50">Carregando...</span>';
+        if (data.status === 'fail') return '<span class="text-red-400">Falha na busca</span>';
+
+        // Format: País | ORG | ASN
+        const country = data.country || 'N/A';
+        const org = (data.org || 'N/A').trim();
+        const asRaw = (data.as || '').trim();
+        const asParts = asRaw.split(' ');
+        const asNumber = asParts[0];
+
+        let content = `<span class="text-blue-400">${country}</span>`;
+        if (org !== 'N/A') content += ` <span class="text-slate-700 mx-1">|</span> ${org}`;
+
+        // ASN Logic (similar to tooltip but simplified for line display)
+        if (asRaw && asRaw !== 'N/A') {
+            const isAsNum = /^AS\d+/i.test(asNumber);
+            if (isAsNum) {
+                content += ` <span class="text-slate-700 mx-1">|</span> <span class="text-purple-400">${asNumber}</span>`;
+            } else if (asRaw.toLowerCase() !== org.toLowerCase()) {
+                content += ` <span class="text-slate-700 mx-1">|</span> ${asRaw}`;
+            }
+        }
+        return content;
+    },
+
+    updateWhoisUi: function (dataItems) {
+        dataItems.forEach(item => {
+            if (!item.query) return;
+            const el = document.getElementById(`whois-info-${item.query}`);
+            if (el) {
+                el.innerHTML = this.getWhoisInfoHtml(item.query);
+            }
+        });
+    },
+
     showError: function (msg) {
         document.getElementById('error-msg').innerText = msg;
         document.getElementById('error-alert').classList.remove('hidden');
@@ -909,6 +1258,219 @@ const app = {
         const sizes = ['Bytes', 'KB', 'MB', 'GB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    },
+
+    isValidIp: function (ip) {
+        return /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(ip);
+    },
+
+    fetchIpBatch: function (ips) {
+        // Filter out IPs already in cache or already in queue
+        const newIps = ips.filter(ip =>
+            !this.state.ipCache[ip] &&
+            !this.state.ipQueue.includes(ip)
+        );
+
+        if (newIps.length === 0) return;
+
+        // Mark as loading immediately to prevent UI from re-queueing
+        newIps.forEach(ip => {
+            this.state.ipCache[ip] = { status: 'loading' };
+        });
+
+        // Add to queue
+        this.state.ipQueue.push(...newIps);
+
+        // Update total for this batch/session
+        this.state.ipProgress.total += newIps.length;
+        this.renderIpProgress(true);
+
+        this.processIpQueue();
+    },
+
+    renderIpProgress: function (show) {
+        const toast = document.getElementById('ip-progress-toast');
+        const text = document.getElementById('ip-progress-text');
+        if (!toast || !text) return;
+
+        if (this.state.connectionError) {
+            toast.classList.add('visible');
+            // Change styling for error
+            toast.className = 'fixed bottom-4 left-4 z-50 bg-red-900/90 border border-red-500/50 backdrop-blur text-white px-4 py-3 rounded-xl shadow-lg transform transition-all duration-300 translate-y-0 opacity-100 visible';
+
+            text.innerHTML = `
+                <div class="flex items-center gap-3">
+                    <i data-lucide="wifi-off" class="w-4 h-4 text-red-400"></i>
+                    <div class="flex flex-col">
+                        <span class="font-bold text-sm">Falha na conexão</span>
+                        <span class="text-xs text-red-200">Não foi possível baixar dados.</span>
+                    </div>
+                    <button onclick="app.retryConnectionView()" class="ml-2 px-2 py-1 bg-white/10 hover:bg-white/20 rounded text-xs transition-colors cursor-pointer">
+                        Tentar Novamente
+                    </button>
+                    ${this.state.viewMode !== 'whois' ? `
+                    <button onclick="app.setView('whois')" class="px-2 py-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded text-xs transition-colors cursor-pointer">
+                        Ir para Whois
+                    </button>
+                    ` : ''}
+                </div>
+             `;
+            lucide.createIcons();
+            return;
+        }
+
+        // Restore default styling if not error
+        if (show) {
+            toast.className = 'fixed bottom-4 left-4 z-50 bg-slate-900/80 border border-slate-700/50 backdrop-blur text-slate-200 px-4 py-3 rounded-xl shadow-lg transform transition-all duration-300 translate-y-0 opacity-100 visible';
+            text.innerHTML = `
+                <div class="flex items-center gap-3">
+                     <div class="w-4 h-4 border-2 border-slate-500 border-t-white rounded-full animate-spin"></div>
+                     <span>Carregando informações dos endereços de IP (${this.state.ipProgress.current}/${this.state.ipProgress.total})</span>
+                </div>
+            `;
+        } else {
+            toast.classList.remove('visible');
+            toast.className = 'fixed bottom-4 left-4 z-50 bg-slate-900/80 border border-slate-700/50 backdrop-blur text-slate-200 px-4 py-3 rounded-xl shadow-lg transform transition-all duration-300 translate-y-20 opacity-0 invisible';
+
+            // Reset counters after hide delay
+            setTimeout(() => {
+                if (!this.state.isProcessingQueue && !this.state.connectionError) {
+                    this.state.ipProgress.current = 0;
+                    this.state.ipProgress.total = 0;
+                }
+            }, 500);
+        }
+    },
+
+    retryConnectionView: function () {
+        if (this.state.viewMode !== 'whois') {
+            app.setView('whois');
+        }
+        this.retryConnection();
+    },
+
+    processIpQueue: async function () {
+        if (this.state.isProcessingQueue) return;
+        this.state.isProcessingQueue = true;
+
+        const BATCH_SIZE = 15; // Safe batch size
+        const DELAY_MS = 1500; // Rate limit protection (approx 40 req/min max)
+
+        while (this.state.ipQueue.length > 0) {
+            const batch = this.state.ipQueue.splice(0, BATCH_SIZE);
+
+            try {
+                const response = await fetch('http://ip-api.com/batch', {
+                    method: 'POST',
+                    body: JSON.stringify(batch.map(ip => ({ query: ip, fields: "country,org,as,query,status,message" })))
+                });
+
+                if (response.status === 429) {
+                    console.warn("Rate limit hit. Pausing...");
+                    // Re-queue
+                    this.state.ipQueue.unshift(...batch);
+                    await new Promise(r => setTimeout(r, 5000));
+                    continue;
+                }
+
+                const data = await response.json();
+
+                data.forEach(item => {
+                    if (item.query) {
+                        this.state.ipCache[item.query] = item;
+                    }
+                });
+
+                // Update progress
+                this.state.ipProgress.current += batch.length;
+                this.renderIpProgress(true);
+
+                if (this.state.viewMode === 'whois') {
+                    this.updateWhoisUi(Object.values(this.state.ipCache)); // Re-update visible ones from batch
+                }
+
+                // Update live tooltips
+                const tooltip = document.getElementById('ip-tooltip');
+                if (tooltip && tooltip.style.display === 'block') {
+                    const activeIp = tooltip.dataset.ip;
+                    if (activeIp && this.state.ipCache[activeIp] && this.state.ipCache[activeIp].status !== 'loading') {
+                        // Trigger update logic reusing showIpTooltip logic
+                        this.showIpTooltip({ pageX: parseInt(tooltip.style.left) - 15, pageY: parseInt(tooltip.style.top) - 15 }, activeIp);
+                    }
+                }
+
+
+
+            } catch (e) {
+                console.error("IP API Error:", e);
+
+                // If it's a fetch error/offline
+                if (e.message.includes('fetch') || e.message.includes('network') || e.message.includes('Failed to fetch')) {
+                    this.state.connectionError = true;
+                    // Restore batch to queue
+                    this.state.ipQueue.unshift(...batch);
+                    this.state.isProcessingQueue = false;
+                    this.renderWhoisView(); // Update UI to show error
+                    this.renderIpProgress(false); // Hide progress
+                    return; // Stop processing
+                }
+
+                // Clear loading status for failed IPs so they can be retried later
+                batch.forEach(ip => {
+                    if (this.state.ipCache[ip] && this.state.ipCache[ip].status === 'loading') {
+                        delete this.state.ipCache[ip];
+                    }
+                });
+
+                // Even on error, we mark as processed for UI purposes
+                this.state.ipProgress.current += batch.length;
+                this.renderIpProgress(true);
+            }
+
+            // Wait before next batch
+            if (this.state.ipQueue.length > 0) {
+                await new Promise(r => setTimeout(r, DELAY_MS));
+            }
+        }
+
+        this.state.isProcessingQueue = false;
+
+        // Hide toast with small delay
+        setTimeout(() => this.renderIpProgress(false), 1000);
+    },
+
+    showIpTooltip: function (e, ip) {
+        const tooltip = document.getElementById('ip-tooltip');
+        if (!tooltip) return;
+
+        tooltip.dataset.ip = ip;
+
+        tooltip.style.display = 'block';
+        let x = e.pageX + 15;
+        let y = e.pageY + 15;
+        if (x + 200 > window.innerWidth) x -= 220;
+
+        tooltip.style.left = x + 'px';
+        tooltip.style.top = y + 'px';
+
+        const data = this.state.ipCache[ip];
+
+        if (!data || data.status === 'loading') {
+            tooltip.innerHTML = '<span class="text-slate-500 italic">Carregando...</span>';
+        } else if (data.status === 'fail') {
+            tooltip.innerHTML = '<span class="text-red-400">Erro: ' + (data.message || 'Falha') + '</span>';
+        } else {
+            // "País | Org | As" - Single line format as requested
+            tooltip.innerHTML =
+                (data.country || 'N/A') + ' | ' +
+                (data.org || 'N/A') + ' | ' +
+                (data.as || 'N/A');
+        }
+    },
+
+    hideTooltip: function () {
+        const tooltip = document.getElementById('ip-tooltip');
+        if (tooltip) tooltip.style.display = 'none';
     }
 };
 

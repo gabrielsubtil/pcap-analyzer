@@ -6,6 +6,15 @@ Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/), e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+### [5.2.0] - 2026-01-31
+
+#### Adicionado
+
+- **Whois Offline:** Tratamento robusto para falhas de conexão na aba Whois. O sistema agora exibe avisos visuais e permite retry manual, evitando travamentos.
+- **Limpeza de Cache (Privacy):** O aplicativo agora descarta dados de análise anteriores ao reiniciar ou resetar, garantindo que cada análise seja isolada ("sem memória").
+- **Modo Produção:** Desativação do modo debug (Menu de Contexto e Ferramentas de Desenvolvedor) para maior segurança e limpeza visual.
+- **Toast Offline:** Notificação flutuante de progresso agora alerta sobre falhas de conexão com opção de redirecionamento.
+
 ### [5.1.0] - 2026-01-28
 
 #### Adicionado
@@ -129,6 +138,15 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/).
+
+### [5.2.0] - 2026-01-31
+
+#### Added
+
+- **Offine Whois:** Robust handling for connection failures in the Whois tab. The system now displays visual warnings and allows manual retry, preventing freezes.
+- **Cache Cleanup (Privacy):** The application now discards previous analysis data upon restart or reset, ensuring each analysis is isolated ("stateless").
+- **Production Mode:** Debug mode (Context Menu and Developer Tools) disabled for enhanced security and visual cleanliness.
+- **Offline Toast:** Floating progress notification now alerts about connection failures with redirection options.
 
 ### [5.1.0] - 2026-01-28
 
