@@ -18,9 +18,16 @@ from backend.consts import get_threat_catalog
 from backend.database import db
 from backend.profiling import profile_performance
 
+# Define constants
+APP_VERSION = '5.2'
+
 class Api:
     def __init__(self):
         self._window = None
+
+    def get_app_version(self):
+        """Retorna a versão da aplicação."""
+        return APP_VERSION
 
     def set_window(self, window):
         self._window = window
@@ -155,7 +162,7 @@ def main():
     icon_path = os.path.join(assets_dir, 'app.ico')
 
     window = webview.create_window(
-        'PCAP Analyzer v5.2',
+        f'PCAP Analyzer v{APP_VERSION}',
         url=index_path,
         js_api=api,
         width=1200,
@@ -170,7 +177,7 @@ def main():
     
     # Inicia o loop da interface gráfica
     # debug=False remove o menu de contexto nativo (Inspect, etc)
-    webview.start(debug=True, http_server=True, icon=icon_path if os.path.exists(icon_path) else None)
+    webview.start(debug=False, http_server=True, icon=icon_path if os.path.exists(icon_path) else None)
 
 if __name__ == '__main__':
     main()

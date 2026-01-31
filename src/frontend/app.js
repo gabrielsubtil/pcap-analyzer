@@ -49,6 +49,14 @@ const app = {
     init: async function () {
         console.log("App initialized");
 
+        // Fetch Version
+        if (window.pywebview) {
+            window.pywebview.api.get_app_version().then(version => {
+                const el = document.getElementById('app-version');
+                if (el) el.innerText = `| Versão: ${version}`;
+            }).catch(err => console.error("Erro ao obter versão:", err));
+        }
+
         // Create Tooltip
         const tooltip = document.createElement('div');
         tooltip.id = 'ip-tooltip';

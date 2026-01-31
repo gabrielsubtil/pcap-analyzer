@@ -6,7 +6,7 @@ import sys
 VERSION_FILE = 'version.txt'
 ICON_PATH = r'src\assets\app.ico'
 DIST_DIR = 'dist_windows'
-EXE_NAME = 'Analisador de Pcap v5'
+EXE_NAME = 'Analisador de Pcap v5.2'
 MAIN_SCRIPT = r'src\boot.py'
 
 def parse_version_txt():
