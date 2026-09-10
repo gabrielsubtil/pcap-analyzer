@@ -3,8 +3,11 @@ pub mod capture;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Multipart, Path, Query, State},
-    http::{HeaderMap, StatusCode, header::CONTENT_TYPE},
-    response::Html,
+    http::{
+        HeaderMap, StatusCode,
+        header::{CONTENT_TYPE, HeaderValue},
+    },
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use futures_util::StreamExt;
@@ -17,6 +20,29 @@ use std::{
 };
 use tokio::{fs, io::AsyncWriteExt, sync::Mutex, time::timeout};
 use uuid::Uuid;
+
+const DESKTOP_INDEX: &[u8] = include_bytes!("../../src/frontend/index.html");
+const DESKTOP_STYLES: &[u8] = include_bytes!("../../src/frontend/styles.css");
+const DESKTOP_APP: &[u8] = include_bytes!("../../src/frontend/app.js");
+const DESKTOP_LOGO: &[u8] = include_bytes!("../../src/frontend/assets/logo.png");
+const PYWEBVIEW_COMPAT: &str = r#"(() => {
+  const call = (method, payload = {}) => fetch(`/api/pywebview/${method}`, {
+    method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(payload)
+  }).then(async response => { const data = await response.json(); if (!response.ok) throw data; return data; });
+  const input = document.createElement('input'); input.type = 'file'; input.multiple = true;
+  window.pywebview = { api: {
+    get_app_version: () => call('get_app_version'),
+    get_catalog: () => call('get_catalog').then(data => data.rules || data),
+    pick_files: () => new Promise(resolve => { input.onchange = () => resolve(Array.from(input.files || []).map(file => file.name)); input.click(); }),
+    analyze_files: files => call('analyze_files', { files }),
+    get_string_filter_types: () => call('get_string_filter_types'),
+    get_analysis_strings: args => call('get_analysis_strings', { args }),
+    get_dns_records: args => call('get_dns_records', { args }),
+    get_all_strings: args => call('get_all_strings', { args })
+  }};
+  window.dispatchEvent(new Event('pywebviewready'));
+})();
+"#;
 
 const MAX_UPLOAD_BYTES: u64 = 64 * 1024 * 1024;
 const JOB_TTL: Duration = Duration::from_secs(15 * 60);
@@ -71,17 +97,75 @@ pub fn app_with_temp_dir(temp_dir: PathBuf) -> Router {
 }
 pub fn app_with_state(state: AppState) -> Router {
     Router::new()
-        .route("/", get(home))
+        .route("/", get(index))
+        .route("/styles.css", get(styles))
+        .route("/app.js", get(app_script))
+        .route("/assets/logo.png", get(logo))
+        .route("/pywebview-compat.js", get(pywebview_compat))
         .route("/api/health", get(health))
         .route("/api/threat-catalog", get(threat_catalog))
+        .route("/api/pywebview/{method}", post(pywebview_api))
         .route("/api/jobs", post(create_job))
         .route("/api/jobs/{job_id}", get(get_job))
         .route("/api/jobs/{job_id}/dns", get(get_dns))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES as usize))
         .with_state(state)
 }
-async fn home() -> Html<&'static str> {
-    Html(include_str!("../index.html"))
+fn static_asset(bytes: &'static [u8], content_type: &'static str) -> Response {
+    let mut response = bytes.into_response();
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
+    response
+}
+async fn index() -> Response {
+    static_asset(DESKTOP_INDEX, "text/html; charset=utf-8")
+}
+async fn styles() -> Response {
+    static_asset(DESKTOP_STYLES, "text/css; charset=utf-8")
+}
+async fn app_script() -> Response {
+    static_asset(DESKTOP_APP, "text/javascript; charset=utf-8")
+}
+async fn logo() -> Response {
+    static_asset(DESKTOP_LOGO, "image/png")
+}
+async fn pywebview_compat() -> Response {
+    static_asset(
+        PYWEBVIEW_COMPAT.as_bytes(),
+        "text/javascript; charset=utf-8",
+    )
+}
+
+async fn pywebview_api(
+    Path(method): Path<String>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
+    match method.as_str() {
+        "get_app_version" => Ok(Json(serde_json::json!("5.0"))),
+        "get_catalog" => Ok(Json(serde_json::json!({
+            "contract_version": "pcap-doctor.threat-catalog.v1",
+            "rules": capture::catalog()
+        }))),
+        "pick_files"
+        | "analyze_files"
+        | "get_string_filter_types"
+        | "get_analysis_strings"
+        | "get_dns_records"
+        | "get_all_strings" => {
+            let _ = payload;
+            Err(api_error(
+                StatusCode::NOT_IMPLEMENTED,
+                "method_not_implemented",
+                "método ainda sem backend de paridade",
+            ))
+        }
+        _ => Err(api_error(
+            StatusCode::NOT_FOUND,
+            "unknown_method",
+            "método pywebview desconhecido",
+        )),
+    }
 }
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {

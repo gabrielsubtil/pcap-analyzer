@@ -15,5 +15,8 @@ async fn home_page_identifies_pcap_doctor_homologation() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.into_body().collect().await.unwrap().to_bytes();
-    assert!(std::str::from_utf8(&body).unwrap().contains("PCAP Doctor"));
+    assert_eq!(
+        body.as_ref(),
+        include_bytes!("../../src/frontend/index.html")
+    );
 }
