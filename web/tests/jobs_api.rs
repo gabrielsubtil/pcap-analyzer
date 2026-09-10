@@ -3,7 +3,12 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use pcap_doctor_web::app;
+use pcap_doctor_web::app_with_temp_dir;
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tower::ServiceExt;
 
 fn multipart(body: &[u8], boundary: &str) -> Body {
@@ -12,14 +17,43 @@ fn multipart(body: &[u8], boundary: &str) -> Body {
     bytes.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
     Body::from(bytes)
 }
-
 async fn json_body(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap()
+}
+fn temp_dir(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "pcap-doctor-{label}-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ))
+}
+fn pcap() -> Vec<u8> {
+    let mut bytes = vec![
+        0xd4, 0xc3, 0xb2, 0xa1, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 1, 0, 0, 0,
+    ];
+    bytes.extend_from_slice(&[1, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 1, 2, 3, 4]);
+    bytes
+}
+fn pcapng() -> Vec<u8> {
+    let mut bytes = vec![
+        0x0a, 0x0d, 0x0d, 0x0a, 28, 0, 0, 0, 0x4d, 0x3c, 0x2b, 0x1a, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 28, 0, 0, 0,
+    ];
+    bytes.extend_from_slice(&[
+        1, 0, 0, 0, 24, 0, 0, 0, 1, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0,
+    ]);
+    bytes.extend_from_slice(&[
+        6, 0, 0, 0, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0, 1, 2,
+        3, 4, 0, 0, 0, 0, 40, 0, 0, 0,
+    ]);
+    bytes
 }
 
 #[tokio::test]
 async fn create_job_requires_multipart_content_type() {
-    let response = app()
+    let response = app_with_temp_dir(temp_dir("content-type"))
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -33,9 +67,11 @@ async fn create_job_requires_multipart_content_type() {
 }
 
 #[tokio::test]
-async fn valid_pcap_creates_limited_result_and_it_is_retrievable() {
-    let boundary = "test-boundary";
-    let service = app();
+async fn valid_pcap_is_parsed_and_temp_file_removed() {
+    let dir = temp_dir("pcap");
+    let service = app_with_temp_dir(dir.clone());
+    let bytes = pcap();
+    let boundary = "pcap-boundary";
     let response = service
         .clone()
         .oneshot(
@@ -46,73 +82,77 @@ async fn valid_pcap_creates_limited_result_and_it_is_retrievable() {
                     "content-type",
                     format!("multipart/form-data; boundary={boundary}"),
                 )
-                .body(multipart(&[0xd4, 0xc3, 0xb2, 0xa1, 1, 2, 3], boundary))
+                .body(multipart(&bytes, boundary))
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::CREATED);
     let json = json_body(response).await;
-    assert_eq!(json["status"], "complete");
-    assert_eq!(json["format"], "pcap");
-    assert_eq!(json["bytes"], 7);
-    assert_eq!(json["limited_result"], true);
-    let job_id = json["job_id"].as_str().unwrap();
-    assert_eq!(job_id.len(), 32);
-    let response = service
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/jobs/{job_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let result = json_body(response).await;
-    assert_eq!(result["job_id"], job_id);
+    assert_eq!(json["contract_version"], "pcap-doctor.job-result.v1");
+    assert_eq!(json["metrics"]["format"], "pcap");
+    assert_eq!(json["metrics"]["packet_count"], 1);
+    assert_eq!(json["metrics"]["captured_bytes"], 4);
+    assert_eq!(json["metrics"]["linktypes"][0]["value"], 1);
+    assert!(
+        fs::read_dir(&dir)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(true)
+    );
 }
 
 #[tokio::test]
-async fn invalid_magic_is_failed_and_not_saved_to_disk() {
-    let boundary = "invalid-boundary";
-    let response = app()
+async fn valid_pcapng_is_parsed() {
+    let dir = temp_dir("pcapng");
+    let response = app_with_temp_dir(dir)
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/api/jobs")
-                .header(
-                    "content-type",
-                    format!("multipart/form-data; boundary={boundary}"),
-                )
-                .body(multipart(b"not a capture", boundary))
+                .header("content-type", "multipart/form-data; boundary=ng")
+                .body(multipart(&pcapng(), "ng"))
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response.status(), StatusCode::CREATED);
     let json = json_body(response).await;
-    assert_eq!(json["status"], "failed");
-    assert_eq!(json["format"], serde_json::Value::Null);
+    assert_eq!(json["metrics"]["format"], "pcapng");
+    assert_eq!(json["metrics"]["packet_count"], 1);
 }
 
 #[tokio::test]
-async fn pcapng_magic_is_accepted() {
-    let boundary = "pcapng-boundary";
-    let response = app()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/jobs")
-                .header(
-                    "content-type",
-                    format!("multipart/form-data; boundary={boundary}"),
-                )
-                .body(multipart(&[0x0a, 0x0d, 0x0d, 0x0a], boundary))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let json = json_body(response).await;
-    assert_eq!(json["format"], "pcapng");
+async fn invalid_and_truncated_captures_fail_safely_and_cleanup() {
+    for (label, bytes) in [
+        ("invalid", b"not a capture".to_vec()),
+        ("truncated", pcap()[..30].to_vec()),
+    ] {
+        let dir = temp_dir(label);
+        let response = app_with_temp_dir(dir.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/jobs")
+                    .header(
+                        "content-type",
+                        format!("multipart/form-data; boundary={label}"),
+                    )
+                    .body(multipart(&bytes, label))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{label}"
+        );
+        let json = json_body(response).await;
+        assert_eq!(json["status"], "failed");
+        assert!(
+            fs::read_dir(&dir)
+                .map(|mut entries| entries.next().is_none())
+                .unwrap_or(true)
+        );
+    }
 }

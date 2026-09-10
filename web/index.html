@@ -11,12 +11,12 @@
 <body><main>
   <span>PCAP Doctor · upload-first · homologação</span>
   <h1>Analise uma captura</h1>
-  <p>Envie um arquivo PCAP ou PCAPNG para validar o formato e obter um resultado temporário.</p>
+  <p>Envie um arquivo PCAP ou PCAPNG para processar o contêiner e obter métricas seguras e temporárias.</p>
   <form id="upload-form"><label class="drop" for="file">Escolher arquivo PCAP/PCAPNG<input id="file" name="file" type="file" accept=".pcap,.pcapng,application/vnd.tcpdump.pcap,application/octet-stream" hidden></label><button id="submit" type="submit">Enviar e analisar</button></form>
-  <p class="note">Limite: 64 MiB. O resultado expira em 15 minutos. Esta primeira versão valida apenas assinatura, formato e tamanho; ela ainda não oferece paridade com a edição Desktop.</p>
+  <p class="note">Limite: 64 MiB. Buffer do parser: 16 MiB; máximo de 1.000.000 blocos/pacotes, 16 MiB por frame e prazo de 5 s. O resultado expira em 15 minutos. A análise mede contêineres e não disseca payloads.</p>
   <div id="result" role="status" hidden></div>
   <script>
     const form=document.querySelector('#upload-form'), file=document.querySelector('#file'), out=document.querySelector('#result'), button=document.querySelector('#submit');
-    form.addEventListener('submit',async event=>{event.preventDefault(); if(!file.files[0]){out.hidden=false;out.textContent='Escolha um arquivo.';return} button.disabled=true;out.hidden=false;out.textContent='Processando…';try{const body=new FormData();body.append('file',file.files[0]);const response=await fetch('/api/jobs',{method:'POST',body});const data=await response.json();out.textContent=data.message||data.error?.message||'Resposta recebida.';if(data.job_id)out.textContent+=`\n\nJob: ${data.job_id}\nFormato: ${data.format||'rejeitado'}\nBytes: ${data.bytes}`;}catch(error){out.textContent='Não foi possível enviar a captura.'}finally{button.disabled=false}});
+    form.addEventListener('submit',async event=>{event.preventDefault(); if(!file.files[0]){out.hidden=false;out.textContent='Escolha um arquivo.';return} button.disabled=true;out.hidden=false;out.textContent='Processando…';try{const body=new FormData();body.append('file',file.files[0]);const response=await fetch('/api/jobs',{method:'POST',body});const data=await response.json();if(data.metrics){const m=data.metrics;out.textContent=`${data.message}\n\nJob: ${data.job_id}\nContrato: ${data.contract_version}\nFormato: ${m.format}\nBytes do arquivo: ${m.file_bytes}\nBlocos: ${m.block_count}\nPacotes: ${m.packet_count}\nBytes capturados: ${m.captured_bytes}\nBytes originais: ${m.original_bytes}\nPacotes truncados: ${m.truncated_packets}\nLinktypes: ${m.linktypes.map(item=>`${item.value} (${item.packets})`).join(', ')||'nenhum'}\nAnálise: ${m.analysis}`;}else{out.textContent=data.message||data.error?.message||'Captura rejeitada.';}}catch(error){out.textContent='Não foi possível enviar a captura.'}finally{button.disabled=false}});
   </script>
 </main></body></html>

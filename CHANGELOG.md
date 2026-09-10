@@ -6,6 +6,23 @@ Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/), e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+### Não lançado — Web PCAP Doctor
+
+#### Adicionado
+
+- **Parsing streaming seguro:** `pcap-parser` 0.17 processa PCAP legado e PCAPNG com métricas contidas, contrato JSON versionado e descarte das fatias zero-copy antes de cada refill.
+- **Limites explícitos:** upload de 64 MiB, buffer de 16 MiB, frame de 16 MiB, 1.000.000 de blocos/pacotes e deadline de 5 s.
+- **Testes sintéticos:** PCAP e PCAPNG válidos são gerados e analisados; capturas inválidas/truncadas e limpeza de temporários são verificadas.
+- **Documentação:** limites, formatos/linktypes e fontes oficiais do pcap-parser/Rusticata e Context7/Axum foram registrados em `deploy/pcap-doctor/README.md`.
+
+#### Alterado
+
+- A UI upload-first agora renderiza as métricas retornadas, em vez de exibir apenas o placeholder de assinatura.
+
+#### Limitações conhecidas
+
+- Este slice não disseca frames nem suporta métricas de protocolos Ethernet/IP/TCP/UDP/DNS; linktypes são tratados como dados opacos e `packet_metrics_supported` é `false`.
+
 ### [5.2.0] - 2026-01-31
 
 #### Adicionado

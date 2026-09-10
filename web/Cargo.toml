@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 axum = { version = "0.8.4", features = ["multipart"] }
 futures-util = "0.3"
+pcap-parser = "0.17"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "fs", "io-util", "sync"] }
 uuid = { version = "1", features = ["v4"] }
