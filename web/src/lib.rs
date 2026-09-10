@@ -2,13 +2,13 @@ pub mod capture;
 
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Multipart, Path, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode, header::CONTENT_TYPE},
     response::Html,
     routing::{get, post},
 };
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -31,6 +31,7 @@ pub struct AppState {
 struct Job {
     expires_at: SystemTime,
     result: JobResult,
+    dns: Vec<capture::DnsEntry>,
 }
 
 #[derive(Clone, Serialize)]
@@ -75,6 +76,7 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/api/threat-catalog", get(threat_catalog))
         .route("/api/jobs", post(create_job))
         .route("/api/jobs/{job_id}", get(get_job))
+        .route("/api/jobs/{job_id}/dns", get(get_dns))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES as usize))
         .with_state(state)
 }
@@ -163,14 +165,77 @@ async fn create_job(
     } else {
         StatusCode::UNPROCESSABLE_ENTITY
     };
+    let dns = result
+        .metrics
+        .as_ref()
+        .map(|m| m.dns_entries.clone())
+        .unwrap_or_default();
     state.jobs.lock().await.insert(
         job_id,
         Job {
             expires_at: SystemTime::now() + JOB_TTL,
             result: result.clone(),
+            dns,
         },
     );
     Ok((status, Json(result)))
+}
+
+#[derive(Debug, Deserialize)]
+struct DnsQuery {
+    limit: Option<u64>,
+    offset: Option<u64>,
+}
+#[derive(Serialize)]
+struct DnsResponse {
+    contract_version: &'static str,
+    job_id: String,
+    limit: u64,
+    offset: u64,
+    total: u64,
+    items: Vec<capture::DnsEntry>,
+}
+async fn get_dns(
+    State(state): State<AppState>,
+    Path(job_id): Path<String>,
+    Query(query): Query<DnsQuery>,
+) -> Result<Json<DnsResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let limit = query.limit.unwrap_or(25);
+    let offset = query.offset.unwrap_or(0);
+    if !(1..=100).contains(&limit) {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_pagination",
+            "limit deve estar entre 1 e 100",
+        ));
+    }
+    let mut jobs = state.jobs.lock().await;
+    jobs.retain(|_, job| job.expires_at > SystemTime::now());
+    let job = jobs.get(&job_id).ok_or_else(|| {
+        api_error(
+            StatusCode::NOT_FOUND,
+            "job_not_found",
+            "job não encontrado ou expirado",
+        )
+    })?;
+    let total = job.dns.len() as u64;
+    if offset > total {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_pagination",
+            "offset excede o total de itens",
+        ));
+    }
+    let start = offset as usize;
+    let end = (start + limit as usize).min(job.dns.len());
+    Ok(Json(DnsResponse {
+        contract_version: "pcap-doctor.dns-page.v1",
+        job_id,
+        limit,
+        offset,
+        total,
+        items: job.dns[start..end].to_vec(),
+    }))
 }
 
 async fn receive_and_parse(

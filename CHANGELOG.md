@@ -10,6 +10,10 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 #### Adicionado
 
+- **DNS Web limitado:** consultas UDP IPv4 sem compressão são agregadas por nome/tipo em memória e expostas por `GET /api/jobs/{id}/dns?limit=&offset=` (`pcap-doctor.dns-page.v1`), com limite de 100 itens por página e 10.000 chaves.
+- **Contadores honestos de DNS:** o contrato `pcap-doctor.dns.v1` distingue consultas suportadas, malformadas, truncadas/comprimidas e DNS/TCP não suportado (framing TCP de 2 bytes ainda não implementado).
+- **UI DNS:** seção PT-BR com contadores de suporte e paginação “Carregar mais”.
+- **Privacidade:** entradas DNS não são serializadas no POST de criação, não são persistidas e são removidas junto com o job após 15 minutos.
 - **Resumo de ameaças heurísticas v1:** contrato limitado a `rule_id`, `title`, `description` e `count`, cobrindo portas suspeitas, porta 0, amplificação/reflexão e regras low-to-low do Desktop.
 - **Catálogo:** endpoint `GET /api/threat-catalog` com explicações em PT-BR e aviso de que heurísticas não provam comprometimento.
 - **Assinaturas seguras:** cinco categorias detectadas por substring fixa ASCII case-insensitive, com limite de 64 KiB por payload e apenas contadores agregados; nenhum payload é persistido ou retornado.

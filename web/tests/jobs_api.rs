@@ -122,6 +122,50 @@ async fn valid_pcapng_is_parsed() {
 }
 
 #[tokio::test]
+async fn dns_subresource_is_paginated_and_validates_limit() {
+    let service = app_with_temp_dir(temp_dir("dns-page"));
+    let response = service
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/jobs")
+                .header("content-type", "multipart/form-data; boundary=dns")
+                .body(multipart(&pcap(), "dns"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let job = json_body(response).await;
+    let id = job["job_id"].as_str().unwrap();
+    assert!(job["metrics"].get("dns_entries").is_none());
+    let page = service
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{id}/dns?limit=1&offset=0"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let json = json_body(page).await;
+    assert_eq!(json["contract_version"], "pcap-doctor.dns-page.v1");
+    assert_eq!(json["total"], 0);
+    let bad = service
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{id}/dns?limit=101"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn invalid_and_truncated_captures_fail_safely_and_cleanup() {
     for (label, bytes) in [
         ("invalid", b"not a capture".to_vec()),

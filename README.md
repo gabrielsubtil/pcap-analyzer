@@ -39,9 +39,22 @@ O **PCAP Analyzer** elimina a necessidade de ferramentas complexas como Wireshar
 - **Análise de Ameaças**: Detecção baseada em assinaturas fixas limitadas e comportamento de tráfego. O Web retorna somente contagens agregadas.
 - **Resumo heurístico Web**: portas suspeitas, porta 0, vetores de amplificação/reflexão e regras low-to-low do Desktop; heurísticas não provam comprometimento.
 - **Catálogo Web**: `GET /api/threat-catalog` descreve cada regra em PT-BR.
+- **DNS Web limitado**: o resultado inclui apenas metadados `pcap-doctor.dns.v1`; as consultas agregadas ficam em `GET /api/jobs/{id}/dns?limit=&offset=` (`limit` 1–100, padrão 25). Cada item é `{name,qtype,count}` e o total de cardinalidade é limitado a 10.000 chaves.
+- **Contrato DNS**: são analisadas consultas UDP IPv4 com QNAME sem compressão; A/AAAA têm rótulos próprios e outros tipos usam `TYPE<n>`. Consultas malformadas, truncadas e comprimidas são contadas sem retornar conteúdo. DNS sobre TCP é explicitamente contado como não suportado; o framing de 2 bytes de DNS/TCP ainda não é interpretado.
+- **Privacidade/TTL**: DNS é agregado somente em memória e expira junto com o job após 15 minutos; não há volume, banco ou log de conteúdo de captura.
 - **Dashboard Rico**: Visualização clara de volumes, protocolos e top talkers.
 - **Inspeção de Payload**: Extração e busca de strings em pacotes suspeitos.
 - **Standalone**: Não requer instalação de drivers ou ferramentas externas.
+
+### Contrato da API DNS Web
+
+`POST /api/jobs` mantém `contract_version: "pcap-doctor.job-result.v1"` e, em `metrics.dns`, retorna:
+
+```json
+{"version":"pcap-doctor.dns.v1","supported_transport":"UDP","parsed_queries":0,"unique_queries":0,"malformed_packets":0,"truncated_packets":0,"compressed_packets":0,"tcp_unsupported_packets":0,"cardinality_capped":false}
+```
+
+As linhas são obtidas somente por `GET /api/jobs/{id}/dns?limit=25&offset=0`, resposta `pcap-doctor.dns-page.v1`: `{job_id,limit,offset,total,items:[{name,qtype,count}]}`. `limit` aceita 1–100 e `offset` não pode exceder `total`; valores inválidos retornam `400 invalid_pagination`. Job e consultas desaparecem após 15 minutos (`404 job_not_found`).
 
 ### Pré-requisitos
 
@@ -96,6 +109,7 @@ Inclui diversas regras de detecção pré-configuradas (Scanners, Webshells, Aut
 
 - **Multi-format**: Native support for PCAP and PCAPNG.
 - **Threat Analysis**: Detection based on signatures and traffic behavior.
+- **Bounded DNS analysis**: The result exposes DNS counters and a paginated ephemeral subresource (`/api/jobs/{id}/dns`), not an unbounded creation response. Only uncompressed IPv4 UDP questions are parsed; malformed, compressed and TCP cases are counted as unsupported.
 - **Rich Dashboard**: Clear visualization of volumes, protocols, and top talkers.
 - **Payload Inspection**: Extraction and string search in suspicious packets.
 - **Standalone**: Does not require installation of drivers or external tools.

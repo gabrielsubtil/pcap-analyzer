@@ -14,6 +14,7 @@ pub const MAX_PACKETS: u64 = 1_000_000;
 pub const MAX_BLOCKS: u64 = 1_000_000;
 const TOP_N: usize = 10;
 const MAX_SIGNATURE_SCAN_BYTES: usize = 64 * 1024;
+pub const MAX_DNS_ENTRIES: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureFormat {
@@ -95,6 +96,27 @@ pub struct CaptureMetrics {
     pub unsupported_linktypes: Vec<i32>,
     pub summary: ProtocolSummary,
     pub threat_summary: Vec<ThreatSummaryEntry>,
+    pub dns: DnsSummary,
+    #[serde(skip)]
+    pub dns_entries: Vec<DnsEntry>,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct DnsSummary {
+    pub version: &'static str,
+    pub supported_transport: &'static str,
+    pub parsed_queries: u64,
+    pub unique_queries: u64,
+    pub malformed_packets: u64,
+    pub truncated_packets: u64,
+    pub compressed_packets: u64,
+    pub tcp_unsupported_packets: u64,
+    pub cardinality_capped: bool,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct DnsEntry {
+    pub name: String,
+    pub qtype: String,
+    pub count: u64,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct ThreatSummaryEntry {
@@ -122,6 +144,12 @@ struct Acc {
     talkers: HashMap<Ipv4Addr, u64>,
     destinations: HashMap<Ipv4Addr, u64>,
     threats: ThreatCounts,
+    dns: HashMap<(String, String), u64>,
+    dns_parsed: u64,
+    dns_malformed: u64,
+    dns_truncated: u64,
+    dns_compressed: u64,
+    dns_tcp: u64,
 }
 
 #[derive(Default)]
@@ -507,6 +535,18 @@ pub fn parse_capture(path: &Path, file_bytes: u64) -> Result<CaptureMetrics, Par
             top_destinations: ips(acc.destinations),
         },
         threat_summary: acc.threats.entries(),
+        dns: DnsSummary {
+            version: "pcap-doctor.dns.v1",
+            supported_transport: "UDP",
+            parsed_queries: acc.dns_parsed,
+            unique_queries: acc.dns.len() as u64,
+            malformed_packets: acc.dns_malformed,
+            truncated_packets: acc.dns_truncated,
+            compressed_packets: acc.dns_compressed,
+            tcp_unsupported_packets: acc.dns_tcp,
+            cardinality_capped: acc.dns.len() >= MAX_DNS_ENTRIES,
+        },
+        dns_entries: dns_entries(acc.dns),
     })
 }
 
@@ -621,7 +661,7 @@ fn ascii_contains_ci(haystack: &[u8], needle: &[u8]) -> bool {
     })
 }
 
-fn analyze_packet(data: &[u8], linktype: i32, _externally_truncated: bool, a: &mut Acc) {
+fn analyze_packet(data: &[u8], linktype: i32, externally_truncated: bool, a: &mut Acc) {
     let packet = if linktype == 1 {
         match LaxPacketHeaders::from_ethernet(data) {
             Ok(packet) => packet,
@@ -693,6 +733,101 @@ fn analyze_packet(data: &[u8], linktype: i32, _externally_truncated: bool, a: &m
         _ => &[],
     };
     evaluate_threats(&mut a.threats, src_port, dst_port, protocol, payload);
+    if protocol == "TCP" && (src_port == Some(53) || dst_port == Some(53)) {
+        a.dns_tcp += 1;
+    } else if protocol == "UDP" && (src_port == Some(53) || dst_port == Some(53)) {
+        if externally_truncated {
+            a.dns_truncated += 1;
+        }
+        match parse_dns_query(if externally_truncated { &[] } else { payload }) {
+            DnsParseOutcome::Query { name, qtype } => {
+                a.dns_parsed += 1;
+                if a.dns.contains_key(&(name.clone(), qtype.clone()))
+                    || a.dns.len() < MAX_DNS_ENTRIES
+                {
+                    *a.dns.entry((name, qtype)).or_default() += 1;
+                }
+            }
+            DnsParseOutcome::Compressed => a.dns_compressed += 1,
+            DnsParseOutcome::Malformed => a.dns_malformed += 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DnsParseOutcome {
+    Query { name: String, qtype: String },
+    Compressed,
+    Malformed,
+}
+
+fn parse_dns_query(data: &[u8]) -> DnsParseOutcome {
+    if data.len() < 12 {
+        return DnsParseOutcome::Malformed;
+    }
+    if data[2] & 0x80 != 0 || u16::from_be_bytes([data[4], data[5]]) == 0 {
+        return DnsParseOutcome::Malformed;
+    }
+    let mut pos = 12;
+    let mut labels = Vec::new();
+    loop {
+        let Some(&len) = data.get(pos) else {
+            return DnsParseOutcome::Malformed;
+        };
+        if len == 0 {
+            pos += 1;
+            break;
+        }
+        if len & 0xc0 == 0xc0 {
+            return DnsParseOutcome::Compressed;
+        }
+        if len > 63 {
+            return DnsParseOutcome::Malformed;
+        }
+        pos += 1;
+        let end = pos.saturating_add(len as usize);
+        let Some(label) = data.get(pos..end) else {
+            return DnsParseOutcome::Malformed;
+        };
+        if label
+            .iter()
+            .any(|b| !b.is_ascii_alphanumeric() && !matches!(b, b'-' | b'_'))
+        {
+            return DnsParseOutcome::Malformed;
+        }
+        labels.push(std::str::from_utf8(label).ok().unwrap_or_default());
+        pos = end;
+        if labels.iter().map(|x| x.len() + 1).sum::<usize>() > 254 {
+            return DnsParseOutcome::Malformed;
+        }
+    }
+    if labels.is_empty() || data.get(pos..pos + 4).is_none() {
+        return DnsParseOutcome::Malformed;
+    }
+    let qtype = u16::from_be_bytes([data[pos], data[pos + 1]]);
+    let qtype = match qtype {
+        1 => "A".into(),
+        28 => "AAAA".into(),
+        n => format!("TYPE{n}"),
+    };
+    DnsParseOutcome::Query {
+        name: labels.join("."),
+        qtype,
+    }
+}
+
+fn dns_entries(m: HashMap<(String, String), u64>) -> Vec<DnsEntry> {
+    let mut entries: Vec<_> = m
+        .into_iter()
+        .map(|((name, qtype), count)| DnsEntry { name, qtype, count })
+        .collect();
+    entries.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then(a.name.cmp(&b.name))
+            .then(a.qtype.cmp(&b.qtype))
+    });
+    entries
 }
 fn ports(mut m: HashMap<u16, u64>) -> Vec<PortMetric> {
     let mut v: Vec<_> = m
@@ -852,6 +987,40 @@ mod tests {
         ];
         h.extend_from_slice(&n.to_le_bytes());
         h
+    }
+    #[test]
+    fn dns_query_parser_aggregates_a_and_aaaa_and_labels_unsupported_forms() {
+        let a = dns_query(b"example.com", 1);
+        let aaaa = dns_query(b"example.com", 28);
+        assert_eq!(
+            parse_dns_query(&a),
+            DnsParseOutcome::Query {
+                name: "example.com".into(),
+                qtype: "A".into()
+            }
+        );
+        assert_eq!(
+            parse_dns_query(&aaaa),
+            DnsParseOutcome::Query {
+                name: "example.com".into(),
+                qtype: "AAAA".into()
+            }
+        );
+        let mut compressed = a.clone();
+        compressed[12] = 0xc0;
+        assert_eq!(parse_dns_query(&compressed), DnsParseOutcome::Compressed);
+        assert_eq!(parse_dns_query(&a[..15]), DnsParseOutcome::Malformed);
+    }
+    fn dns_query(name: &[u8], qtype: u16) -> Vec<u8> {
+        let mut out = vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+        for label in name.split(|b| *b == b'.') {
+            out.push(label.len() as u8);
+            out.extend_from_slice(label);
+        }
+        out.push(0);
+        out.extend_from_slice(&qtype.to_be_bytes());
+        out.extend_from_slice(&1u16.to_be_bytes());
+        out
     }
     fn temp_path() -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
