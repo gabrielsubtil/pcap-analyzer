@@ -103,7 +103,7 @@ jobs:
           verified_digest="$(jq -er '.digest' <<<"$manifest_json")"
           test "$verified_digest" = "$DIGEST"
 
-          platform_json="$(docker buildx imagetools inspect --format '{{json (index .Image "linux/arm64")}}' "$reference")"
+          platform_json="$(docker buildx imagetools inspect --format '{{json .Image}}' "$reference")"
           printf '%s\n' "$platform_json" | tee /tmp/pcap-doctor-image-platform.json >/dev/null
           jq -e '(.os == "linux") and (.architecture == "arm64")' \
             /tmp/pcap-doctor-image-platform.json >/dev/null
