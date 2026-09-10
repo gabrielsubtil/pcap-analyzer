@@ -38,44 +38,25 @@ const PYWEBVIEW_COMPAT: &str = r#"(() => {
   });
   const input = document.createElement('input'); input.type = 'file'; input.multiple = true;
   let selectedFiles = [];
-  const sum = (a, b) => a + (Number(b) || 0);
-  const mergeCounts = (items, key) => items.reduce((out, item) => {
-    const name = String(item[key]); out[name] = sum(out[name] || 0, item.packets); return out;
-  }, {});
-  const aggregate = results => {
-    const metrics = results.map(result => result.metrics).filter(Boolean);
-    const summaries = metrics.map(metric => metric.summary || {});
-    const top = key => Object.values(summaries.flatMap(summary => summary[key] || []).reduce((out, item) => {
-      const name = item.value; out[name] = {...item, packets: sum(out[name]?.packets || 0, item.packets)}; return out;
-    }, {})).map(item => [item.value, item.packets]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 10);
-    const threats = Object.values(metrics.flatMap(metric => metric.threat_summary || []).reduce((out, item) => {
-      out[item.rule_id] = {...item, count: sum(out[item.rule_id]?.count || 0, item.count)}; return out;
-    }, {})).sort((a, b) => b.count - a.count || a.rule_id.localeCompare(b.rule_id)).map(item => ({title: item.title, description: item.description, count: item.count}));
-    const sourceIps = new Set(summaries.flatMap(summary => summary.source_ip_values || []));
-    const destinationIps = new Set(summaries.flatMap(summary => summary.destination_ip_values || []));
-    return {
-      totalPackets: summaries.reduce((total, summary) => sum(total, summary.packet_count), 0),
-      totalBytes: metrics.reduce((total, metric) => sum(total, metric.captured_bytes), 0),
-      uniqueSrcIpsCount: sourceIps.size,
-      uniqueDstIpsCount: destinationIps.size,
-      topTalkers: top('top_talkers'), topDestinations: top('top_destinations'),
-      protocolStats: summaries.reduce((out, summary) => { for (const [name, count] of Object.entries(summary.protocol_counts || {})) out[name] = sum(out[name] || 0, count); return out; }, {}),
-      portStats: mergeCounts(summaries.flatMap(summary => summary.destination_ports || []), 'port'),
-      srcPortStats: mergeCounts(summaries.flatMap(summary => summary.source_ports || []), 'port'),
-      packetSizeStats: summaries.reduce((out, summary) => { for (const [size, count] of Object.entries(summary.packet_size_stats || {})) out[size] = sum(out[size] || 0, count); return out; }, {}), threatStats: threats
-    };
-  };
   const analyze = async () => {
     if (!selectedFiles.length) throw new Error('Nenhum arquivo selecionado.');
-    const results = [];
-    for (const file of selectedFiles) {
-      const form = new FormData(); form.append('file', file, file.name);
-      const response = await fetch('/api/jobs', {method: 'POST', body: form});
-      const data = await response.json();
-      if (!response.ok || data.status === 'failed') throw new Error(data?.error?.message || data?.message || 'Falha no job de análise.');
-      results.push(data);
-    }
-    return aggregate(results);
+    const form = new FormData();
+    selectedFiles.forEach(file => form.append('file', file, file.name));
+    const response = await fetch('/api/jobs/aggregate', {method: 'POST', body: form});
+    const data = await response.json();
+    if (!response.ok || data.status === 'failed') throw new Error(data?.error?.message || data?.message || 'Falha no job de análise.');
+    const summary = data.metrics?.summary || {};
+    return {
+      totalPackets: summary.packet_count || 0, totalBytes: data.metrics?.captured_bytes || 0,
+      uniqueSrcIpsCount: summary.unique_source_ips || 0, uniqueDstIpsCount: summary.unique_destination_ips || 0,
+      topTalkers: (summary.top_talkers || []).map(item => [item.value, item.packets]),
+      topDestinations: (summary.top_destinations || []).map(item => [item.value, item.packets]),
+      protocolStats: summary.protocol_counts || {},
+      portStats: Object.fromEntries((summary.destination_ports || []).map(item => [item.port, item.packets])),
+      srcPortStats: Object.fromEntries((summary.source_ports || []).map(item => [item.port, item.packets])),
+      packetSizeStats: summary.packet_size_stats || {},
+      threatStats: (data.metrics?.threat_summary || []).map(item => ({title: item.title, description: item.description, count: item.count}))
+    };
   };
   window.pywebview = { api: {
     get_app_version: () => call('get_app_version'),
@@ -92,6 +73,8 @@ const PYWEBVIEW_COMPAT: &str = r#"(() => {
 "#;
 
 const MAX_UPLOAD_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_AGGREGATE_FILES: usize = 50;
+const MAX_AGGREGATE_BYTES: u64 = 256 * 1024 * 1024;
 const JOB_TTL: Duration = Duration::from_secs(15 * 60);
 const PARSE_DEADLINE: Duration = Duration::from_secs(5);
 
@@ -153,9 +136,10 @@ pub fn app_with_state(state: AppState) -> Router {
         .route("/api/threat-catalog", get(threat_catalog))
         .route("/api/pywebview/{method}", post(pywebview_api))
         .route("/api/jobs", post(create_job))
+        .route("/api/jobs/aggregate", post(create_aggregate_job))
         .route("/api/jobs/{job_id}", get(get_job))
         .route("/api/jobs/{job_id}/dns", get(get_dns))
-        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES as usize))
+        .layer(DefaultBodyLimit::max(MAX_AGGREGATE_BYTES as usize))
         .with_state(state)
 }
 fn static_asset(body: impl IntoResponse, content_type: &'static str) -> Response {
@@ -333,6 +317,161 @@ struct DnsResponse {
     total: u64,
     items: Vec<capture::DnsEntry>,
 }
+async fn create_aggregate_job(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    multipart: Result<Multipart, axum::extract::multipart::MultipartRejection>,
+) -> Result<(StatusCode, Json<JobResult>), (StatusCode, Json<ApiErrorResponse>)> {
+    if !headers
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("multipart/form-data"))
+    {
+        return Err(api_error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_media_type",
+            "envie arquivos via multipart",
+        ));
+    }
+    let mut multipart = multipart.map_err(|error| json_error(bad_multipart(error)))?;
+    let job_id = Uuid::new_v4().simple().to_string();
+    let dir = state.temp_dir.join(format!("aggregate-{job_id}"));
+    fs::create_dir_all(&dir)
+        .await
+        .map_err(|error| json_error(internal_error(error)))?;
+    let mut paths = Vec::new();
+    let mut total = 0u64;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| json_error(bad_multipart(e)))?
+    {
+        if field.name() != Some("file") {
+            continue;
+        }
+        if paths.len() >= MAX_AGGREGATE_FILES {
+            cleanup_paths(&paths).await;
+            let _ = fs::remove_dir(&dir).await;
+            return Err(json_error(raw_api_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "too_many_files",
+                "o job agregado aceita no máximo 50 arquivos",
+            )));
+        }
+        let path = dir.join(format!("{}.capture", paths.len()));
+        let mut file = fs::File::create(&path)
+            .await
+            .map_err(|e| json_error(internal_error(e)))?;
+        let mut bytes = 0u64;
+        let mut field = field;
+        while let Some(chunk) = field.next().await {
+            let chunk = chunk.map_err(|e| json_error(bad_multipart(e)))?;
+            bytes = bytes.saturating_add(chunk.len() as u64);
+            total = total.saturating_add(chunk.len() as u64);
+            if bytes > MAX_UPLOAD_BYTES || total > MAX_AGGREGATE_BYTES {
+                cleanup_paths(&paths).await;
+                let _ = fs::remove_file(&path).await;
+                let _ = fs::remove_dir(&dir).await;
+                return Err(json_error(raw_api_error(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "aggregate_too_large",
+                    "limite agregado excedido",
+                )));
+            }
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| json_error(internal_error(e)))?;
+        }
+        file.flush()
+            .await
+            .map_err(|e| json_error(internal_error(e)))?;
+        drop(file);
+        if bytes == 0 {
+            cleanup_paths(&paths).await;
+            let _ = fs::remove_file(&path).await;
+            let _ = fs::remove_dir(&dir).await;
+            return Err(json_error(raw_api_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_capture",
+                "arquivo vazio",
+            )));
+        }
+        paths.push(path);
+    }
+    if paths.is_empty() {
+        let _ = fs::remove_dir(&dir).await;
+        return Err(json_error(raw_api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_capture",
+            "nenhum campo file",
+        )));
+    }
+    let mut captures = Vec::new();
+    for path in &paths {
+        let parsed = timeout(
+            PARSE_DEADLINE,
+            tokio::task::spawn_blocking({
+                let path = path.clone();
+                let bytes = fs::metadata(path.clone())
+                    .await
+                    .map_err(|e| json_error(internal_error(e)))?
+                    .len();
+                move || capture::parse_capture(&path, bytes)
+            }),
+        )
+        .await;
+        match parsed {
+            Ok(Ok(Ok(metrics))) => captures.push(metrics),
+            _ => {
+                cleanup_paths(&paths).await;
+                let _ = fs::remove_dir(&dir).await;
+                return Err(json_error(raw_api_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_capture",
+                    "captura inválida, truncada ou fora dos limites",
+                )));
+            }
+        }
+    }
+    cleanup_paths(&paths).await;
+    let _ = fs::remove_dir(&dir).await;
+    let metrics = capture::aggregate_captures(captures).map_err(|_| {
+        json_error(raw_api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_capture",
+            "falha ao agregar capturas",
+        ))
+    })?;
+    let dns = metrics.dns_entries.clone();
+    let result = JobResult {
+        contract_version: "pcap-doctor.job-result.v1",
+        job_id: job_id.clone(),
+        status: "complete",
+        format: Some(metrics.format),
+        bytes: total,
+        limited_result: true,
+        metrics: Some(metrics),
+        message:
+            "capturas agregadas; o resultado contém métricas limitadas e cardinalidades globais"
+                .into(),
+    };
+    state.jobs.lock().await.insert(
+        job_id,
+        Job {
+            expires_at: SystemTime::now() + JOB_TTL,
+            result: result.clone(),
+            dns,
+        },
+    );
+    Ok((StatusCode::CREATED, Json(result)))
+}
+
+async fn cleanup_paths(paths: &[PathBuf]) {
+    for path in paths {
+        let _ = fs::remove_file(path).await;
+    }
+}
+
 async fn get_dns(
     State(state): State<AppState>,
     Path(job_id): Path<String>,

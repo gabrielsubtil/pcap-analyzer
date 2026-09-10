@@ -67,7 +67,7 @@ async fn browser_analysis_sends_real_files_as_multipart() {
     .await;
     assert!(script.contains("new FormData()"));
     assert!(script.contains("form.append('file', file, file.name)"));
-    assert!(script.contains("fetch('/api/jobs'"));
+    assert!(script.contains("fetch('/api/jobs/aggregate'"));
     assert!(!script.contains("Content-Type"));
 }
 
@@ -99,11 +99,10 @@ async fn browser_bridge_maps_and_aggregates_backend_metrics_in_camel_case() {
     ] {
         assert!(script.contains(key), "missing {key}");
     }
-    assert!(script.contains("const metrics = results.map"));
-    assert!(script.contains("for (const file of selectedFiles)"));
-    assert!(script.contains("results.push(data)"));
+    assert!(script.contains("const form = new FormData()"));
+    assert!(script.contains("fetch('/api/jobs/aggregate'"));
     assert!(script.contains("summary.packet_count"));
-    assert!(script.contains("metric.summary"));
+    assert!(script.contains("summary.unique_source_ips"));
 }
 
 #[tokio::test]
@@ -120,7 +119,7 @@ async fn browser_bridge_emits_desktop_tuple_contract_for_ip_distributions() {
     )
     .await;
     assert!(script.contains(".map(item => [item.value, item.packets])"));
-    assert!(script.contains(".sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))"));
+    assert!(script.contains("summary.top_talkers"));
 }
 
 #[tokio::test]
@@ -154,17 +153,10 @@ async fn browser_bridge_unions_per_file_ip_values_for_global_cardinality() {
             .unwrap(),
     )
     .await;
-    assert!(
-        script.contains("new Set(summaries.flatMap(summary => summary.source_ip_values || []))")
-    );
-    assert!(
-        script
-            .contains("new Set(summaries.flatMap(summary => summary.destination_ip_values || []))")
-    );
-    assert!(
-        !script
-            .contains("summaries.reduce((total, summary) => sum(total, summary.unique_source_ips)")
-    );
+    assert!(script.contains("summary.unique_source_ips"));
+    assert!(script.contains("summary.unique_destination_ips"));
+    assert!(!script.contains("source_ip_values"));
+    assert!(!script.contains("destination_ip_values"));
     assert!(script.contains("summary.packet_size_stats"));
 }
 

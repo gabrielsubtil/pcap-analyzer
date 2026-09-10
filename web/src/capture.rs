@@ -77,8 +77,6 @@ pub struct ProtocolSummary {
     pub destination_ports: Vec<PortMetric>,
     pub unique_source_ips: u64,
     pub unique_destination_ips: u64,
-    pub source_ip_values: Vec<String>,
-    pub destination_ip_values: Vec<String>,
     pub top_talkers: Vec<DistributionMetric>,
     pub top_destinations: Vec<DistributionMetric>,
     pub packet_size_stats: HashMap<u64, u64>,
@@ -101,7 +99,9 @@ pub struct CaptureMetrics {
     pub threat_summary: Vec<ThreatSummaryEntry>,
     pub dns: DnsSummary,
     #[serde(skip)]
-    pub dns_entries: Vec<DnsEntry>,
+    pub(crate) dns_entries: Vec<DnsEntry>,
+    #[serde(skip)]
+    pub(crate) aggregate: AggregateState,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct DnsSummary {
@@ -134,6 +134,28 @@ pub enum ParseError {
     LimitExceeded(&'static str),
 }
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AggregateState {
+    pub(crate) src_ips: BTreeSet<Ipv4Addr>,
+    pub(crate) dst_ips: BTreeSet<Ipv4Addr>,
+    pub(crate) talkers: HashMap<Ipv4Addr, u64>,
+    pub(crate) destinations: HashMap<Ipv4Addr, u64>,
+    pub(crate) src_ports: HashMap<u16, u64>,
+    pub(crate) dst_ports: HashMap<u16, u64>,
+    pub(crate) packet_sizes: HashMap<u64, u64>,
+    pub(crate) protocols: ProtocolCounts,
+    threats: ThreatCounts,
+    pub(crate) dns: HashMap<(String, String), u64>,
+    pub(crate) parsed: u64,
+    pub(crate) unparsed: u64,
+    pub(crate) truncated: u64,
+    pub(crate) dns_parsed: u64,
+    pub(crate) dns_malformed: u64,
+    pub(crate) dns_truncated: u64,
+    pub(crate) dns_compressed: u64,
+    pub(crate) dns_tcp: u64,
+}
+
 #[derive(Default)]
 struct Acc {
     parsed: u64,
@@ -156,7 +178,7 @@ struct Acc {
     dns_tcp: u64,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 struct ThreatCounts {
     counts: HashMap<&'static str, u64>,
 }
@@ -511,6 +533,26 @@ pub fn parse_capture(path: &Path, file_bytes: u64) -> Result<CaptureMetrics, Par
             packet_metrics_supported: matches!(value, 1 | 113),
         })
         .collect();
+    let aggregate = AggregateState {
+        src_ips: acc.src_ips.clone(),
+        dst_ips: acc.dst_ips.clone(),
+        talkers: acc.talkers.clone(),
+        destinations: acc.destinations.clone(),
+        src_ports: acc.src_ports.clone(),
+        dst_ports: acc.dst_ports.clone(),
+        packet_sizes: acc.packet_sizes.clone(),
+        protocols: acc.protocols.clone(),
+        threats: acc.threats.clone(),
+        dns: acc.dns.clone(),
+        parsed: acc.parsed,
+        unparsed: acc.unparsed,
+        truncated: acc.truncated,
+        dns_parsed: acc.dns_parsed,
+        dns_malformed: acc.dns_malformed,
+        dns_truncated: acc.dns_truncated,
+        dns_compressed: acc.dns_compressed,
+        dns_tcp: acc.dns_tcp,
+    };
     Ok(CaptureMetrics {
         contract_version: "pcap-doctor.metrics.v2",
         analysis: "lax_protocol_summary",
@@ -536,9 +578,7 @@ pub fn parse_capture(path: &Path, file_bytes: u64) -> Result<CaptureMetrics, Par
             destination_ports: ports(acc.dst_ports),
             unique_source_ips: acc.src_ips.len() as u64,
             unique_destination_ips: acc.dst_ips.len() as u64,
-            source_ip_values: acc.src_ips.iter().map(ToString::to_string).collect(),
-            destination_ip_values: acc.dst_ips.iter().map(ToString::to_string).collect(),
-            top_talkers: ips(acc.talkers),
+            top_talkers: ips(acc.talkers.clone()),
             top_destinations: ips(acc.destinations),
             packet_size_stats: acc.packet_sizes,
         },
@@ -555,9 +595,97 @@ pub fn parse_capture(path: &Path, file_bytes: u64) -> Result<CaptureMetrics, Par
             cardinality_capped: acc.dns.len() >= MAX_DNS_ENTRIES,
         },
         dns_entries: dns_entries(acc.dns),
+        aggregate,
     })
 }
 
+pub fn aggregate_captures(captures: Vec<CaptureMetrics>) -> Result<CaptureMetrics, ParseError> {
+    let mut captures = captures.into_iter();
+    let mut result = captures.next().ok_or(ParseError::InvalidCapture)?;
+    for capture in captures {
+        result.file_bytes = result.file_bytes.saturating_add(capture.file_bytes);
+        result.block_count = result.block_count.saturating_add(capture.block_count);
+        result.packet_count = result.packet_count.saturating_add(capture.packet_count);
+        result.captured_bytes = result.captured_bytes.saturating_add(capture.captured_bytes);
+        result.original_bytes = result.original_bytes.saturating_add(capture.original_bytes);
+        result.truncated_packets = result
+            .truncated_packets
+            .saturating_add(capture.truncated_packets);
+        for item in capture.linktypes {
+            if let Some(existing) = result.linktypes.iter_mut().find(|x| x.value == item.value) {
+                existing.packets = existing.packets.saturating_add(item.packets);
+            } else {
+                result.linktypes.push(item);
+            }
+        }
+        merge_state(&mut result.aggregate, capture.aggregate);
+    }
+    let a = result.aggregate.clone();
+    result.summary.packet_count = result.packet_count;
+    result.summary.parsed_packets = a.parsed;
+    result.summary.unparsed_packets = a.unparsed;
+    result.summary.truncated_packets = result.truncated_packets;
+    result.summary.byte_count = result.captured_bytes;
+    result.summary.protocol_counts = a.protocols.clone();
+    result.summary.source_ports = ports(a.src_ports.clone());
+    result.summary.destination_ports = ports(a.dst_ports.clone());
+    result.summary.unique_source_ips = a.src_ips.len() as u64;
+    result.summary.unique_destination_ips = a.dst_ips.len() as u64;
+    result.summary.top_talkers = ips(a.talkers.clone());
+    result.summary.top_destinations = ips(a.destinations.clone());
+    result.summary.packet_size_stats = a.packet_sizes.clone();
+    result.threat_summary = a.threats.entries();
+    result.dns = DnsSummary {
+        version: "pcap-doctor.dns.v1",
+        supported_transport: "UDP",
+        parsed_queries: a.dns_parsed,
+        unique_queries: a.dns.len() as u64,
+        malformed_packets: a.dns_malformed,
+        truncated_packets: a.dns_truncated,
+        compressed_packets: a.dns_compressed,
+        tcp_unsupported_packets: a.dns_tcp,
+        cardinality_capped: a.dns.len() >= MAX_DNS_ENTRIES,
+    };
+    result.dns_entries = dns_entries(a.dns.clone());
+    Ok(result)
+}
+
+fn merge_state(left: &mut AggregateState, right: AggregateState) {
+    left.src_ips.extend(right.src_ips);
+    left.dst_ips.extend(right.dst_ips);
+    for (key, value) in right.talkers {
+        *left.talkers.entry(key).or_default() += value;
+    }
+    for (key, value) in right.destinations {
+        *left.destinations.entry(key).or_default() += value;
+    }
+    for (key, value) in right.src_ports {
+        *left.src_ports.entry(key).or_default() += value;
+    }
+    for (key, value) in right.dst_ports {
+        *left.dst_ports.entry(key).or_default() += value;
+    }
+    for (key, value) in right.packet_sizes {
+        *left.packet_sizes.entry(key).or_default() += value;
+    }
+    left.protocols.tcp += right.protocols.tcp;
+    left.protocols.udp += right.protocols.udp;
+    left.protocols.icmp += right.protocols.icmp;
+    for (key, value) in right.threats.counts {
+        *left.threats.counts.entry(key).or_default() += value;
+    }
+    for (key, value) in right.dns {
+        *left.dns.entry(key).or_default() += value;
+    }
+    left.parsed += right.parsed;
+    left.unparsed += right.unparsed;
+    left.truncated += right.truncated;
+    left.dns_parsed += right.dns_parsed;
+    left.dns_malformed += right.dns_malformed;
+    left.dns_truncated += right.dns_truncated;
+    left.dns_compressed += right.dns_compressed;
+    left.dns_tcp += right.dns_tcp;
+}
 fn evaluate_threats(
     counts: &mut ThreatCounts,
     src: Option<u16>,

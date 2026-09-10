@@ -17,6 +17,17 @@ fn multipart(body: &[u8], boundary: &str) -> Body {
     bytes.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
     Body::from(bytes)
 }
+
+fn multipart_files(files: &[(&str, &[u8])], boundary: &str) -> Body {
+    let mut bytes = Vec::new();
+    for (name, body) in files {
+        bytes.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes());
+        bytes.extend_from_slice(body);
+        bytes.extend_from_slice(b"\r\n");
+    }
+    bytes.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    Body::from(bytes)
+}
 async fn json_body(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap()
 }
@@ -199,4 +210,54 @@ async fn invalid_and_truncated_captures_fail_safely_and_cleanup() {
                 .unwrap_or(true)
         );
     }
+}
+
+#[tokio::test]
+async fn aggregate_job_accepts_fifty_files_and_returns_one_bounded_result() {
+    let files: Vec<_> = (0..50).map(|_| ("capture.pcap", pcap())).collect();
+    let refs: Vec<_> = files
+        .iter()
+        .map(|(name, bytes)| (*name, bytes.as_slice()))
+        .collect();
+    let response = app_with_temp_dir(temp_dir("aggregate-50"))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/jobs/aggregate")
+                .header("content-type", "multipart/form-data; boundary=aggregate")
+                .body(multipart_files(&refs, "aggregate"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let json = json_body(response).await;
+    assert_eq!(json["metrics"]["packet_count"], 50);
+    assert!(json["metrics"]["summary"].get("source_ip_values").is_none());
+    assert!(
+        json["metrics"]["summary"]
+            .get("destination_ip_values")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn aggregate_job_rejects_more_than_fifty_files() {
+    let files: Vec<_> = (0..51).map(|_| ("capture.pcap", pcap())).collect();
+    let refs: Vec<_> = files
+        .iter()
+        .map(|(name, bytes)| (*name, bytes.as_slice()))
+        .collect();
+    let response = app_with_temp_dir(temp_dir("aggregate-count-limit"))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/jobs/aggregate")
+                .header("content-type", "multipart/form-data; boundary=too-many")
+                .body(multipart_files(&refs, "too-many"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
