@@ -110,6 +110,43 @@ async fn unsupported_pywebview_methods_return_controlled_errors() {
 }
 
 #[tokio::test]
+async fn string_bridge_requires_analysis_for_all_three_apis() {
+    for method in [
+        "get_string_filter_types",
+        "get_analysis_strings",
+        "get_all_strings",
+    ] {
+        let request = Request::post(format!("/api/pywebview/{method}"))
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let response = app().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT, "{method}");
+        assert!(
+            String::from_utf8(body(response).await)
+                .unwrap()
+                .contains("analysis_required")
+        );
+    }
+}
+
+#[tokio::test]
+async fn string_bridge_preserves_desktop_call_arities() {
+    let response = app()
+        .oneshot(
+            Request::get("/pywebview-compat.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let script = String::from_utf8(body(response).await).unwrap();
+    assert!(script.contains("get_string_filter_types: ()"));
+    assert!(script.contains("get_analysis_strings: (limit, offset, filterType)"));
+    assert!(script.contains("get_all_strings: (limit, offset)"));
+}
+
+#[tokio::test]
 async fn serves_browser_bridge_that_uses_file_input_without_paths() {
     let response = app()
         .oneshot(

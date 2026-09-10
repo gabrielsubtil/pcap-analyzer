@@ -15,6 +15,9 @@ pub const MAX_BLOCKS: u64 = 1_000_000;
 const TOP_N: usize = 10;
 const MAX_SIGNATURE_SCAN_BYTES: usize = 64 * 1024;
 pub const MAX_DNS_ENTRIES: usize = 10_000;
+pub const MAX_STRING_ENTRIES: usize = 10_000;
+pub const MAX_STRING_PAYLOAD_BYTES: usize = 256;
+const MIN_ASCII_STRING_BYTES: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureFormat {
@@ -101,6 +104,10 @@ pub struct CaptureMetrics {
     #[serde(skip)]
     pub(crate) dns_records: Vec<DnsParityEntry>,
     #[serde(skip)]
+    pub(crate) string_entries: Vec<StringEntry>,
+    #[serde(skip)]
+    pub(crate) threat_string_entries: Vec<ThreatStringEntry>,
+    #[serde(skip)]
     pub(crate) aggregate: AggregateState,
 }
 #[derive(Debug, Clone, Serialize)]
@@ -132,6 +139,22 @@ pub struct DnsParityEntry {
     pub count: u64,
 }
 #[derive(Debug, Clone, Serialize)]
+pub struct StringEntry {
+    pub payload: String,
+    pub count: u64,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct ThreatStringEntry {
+    #[serde(rename = "threatType")]
+    pub threat_type: String,
+    #[serde(rename = "threatDesc")]
+    pub threat_desc: String,
+    #[serde(rename = "threatExplanation")]
+    pub threat_explanation: String,
+    pub payload: String,
+    pub count: u64,
+}
+#[derive(Debug, Clone, Serialize)]
 pub struct ThreatSummaryEntry {
     pub rule_id: &'static str,
     pub title: &'static str,
@@ -156,6 +179,8 @@ pub(crate) struct AggregateState {
     pub(crate) protocols: ProtocolCounts,
     threats: ThreatCounts,
     pub(crate) dns: HashMap<(u16, String, String), u64>,
+    pub(crate) all_strings: HashMap<String, u64>,
+    pub(crate) threat_strings: HashMap<(&'static str, String), u64>,
     pub(crate) parsed: u64,
     pub(crate) unparsed: u64,
     pub(crate) truncated: u64,
@@ -181,6 +206,8 @@ struct Acc {
     packet_sizes: HashMap<u64, u64>,
     threats: ThreatCounts,
     dns: HashMap<(u16, String, String), u64>,
+    all_strings: HashMap<String, u64>,
+    threat_strings: HashMap<(&'static str, String), u64>,
     dns_parsed: u64,
     dns_malformed: u64,
     dns_truncated: u64,
@@ -554,6 +581,8 @@ pub fn parse_capture(path: &Path, file_bytes: u64) -> Result<CaptureMetrics, Par
         protocols: acc.protocols.clone(),
         threats: acc.threats.clone(),
         dns: acc.dns.clone(),
+        all_strings: acc.all_strings.clone(),
+        threat_strings: acc.threat_strings.clone(),
         parsed: acc.parsed,
         unparsed: acc.unparsed,
         truncated: acc.truncated,
@@ -605,6 +634,8 @@ pub fn parse_capture(path: &Path, file_bytes: u64) -> Result<CaptureMetrics, Par
             cardinality_capped: acc.dns.len() >= MAX_DNS_ENTRIES,
         },
         dns_records: dns_records(acc.dns),
+        string_entries: string_entries(acc.all_strings.clone()),
+        threat_string_entries: threat_string_entries(&acc.threat_strings),
         aggregate,
     })
 }
@@ -645,6 +676,8 @@ pub fn aggregate_captures(captures: Vec<CaptureMetrics>) -> Result<CaptureMetric
     result.summary.top_destinations = ips(a.destinations.clone());
     result.summary.packet_size_stats = a.packet_sizes.clone();
     result.threat_summary = a.threats.entries();
+    result.string_entries = string_entries(a.all_strings.clone());
+    result.threat_string_entries = threat_string_entries(&a.threat_strings);
     result.dns = DnsSummary {
         version: "pcap-doctor.dns.v1",
         supported_transport: "UDP",
@@ -687,6 +720,17 @@ fn merge_state(left: &mut AggregateState, right: AggregateState) {
     for (key, value) in right.dns {
         *left.dns.entry(key).or_default() += value;
     }
+    for (key, value) in right.all_strings {
+        if left.all_strings.len() < MAX_STRING_ENTRIES || left.all_strings.contains_key(&key) {
+            *left.all_strings.entry(key).or_default() += value;
+        }
+    }
+    for (key, value) in right.threat_strings {
+        if left.threat_strings.len() < MAX_STRING_ENTRIES || left.threat_strings.contains_key(&key)
+        {
+            *left.threat_strings.entry(key).or_default() += value;
+        }
+    }
     left.parsed += right.parsed;
     left.unparsed += right.unparsed;
     left.truncated += right.truncated;
@@ -696,6 +740,100 @@ fn merge_state(left: &mut AggregateState, right: AggregateState) {
     left.dns_compressed += right.dns_compressed;
     left.dns_tcp += right.dns_tcp;
 }
+fn collect_strings(a: &mut Acc, payload: &[u8], truncated: bool) {
+    if truncated {
+        return;
+    }
+    let mut start = None;
+    for index in 0..=payload.len() {
+        let ascii = payload
+            .get(index)
+            .is_some_and(|byte| (0x20..=0x7e).contains(byte));
+        if ascii && start.is_none() {
+            start = Some(index);
+        }
+        if (!ascii || index == payload.len()) && start.is_some() {
+            let begin = start.take().unwrap();
+            let end = index;
+            if end - begin >= MIN_ASCII_STRING_BYTES && end - begin <= MAX_STRING_PAYLOAD_BYTES {
+                let value = String::from_utf8(payload[begin..end].to_vec()).unwrap();
+                if a.all_strings.len() < MAX_STRING_ENTRIES || a.all_strings.contains_key(&value) {
+                    *a.all_strings.entry(value).or_default() += 1;
+                }
+            }
+        }
+    }
+}
+
+fn collect_threat_strings(
+    a: &mut Acc,
+    src: Option<u16>,
+    dst: Option<u16>,
+    protocol: &str,
+    payload: &[u8],
+    truncated: bool,
+) {
+    if truncated || src.is_none() || dst.is_none() {
+        return;
+    }
+    let mut detected = ThreatCounts::default();
+    evaluate_threats(&mut detected, src, dst, protocol, payload);
+    let runs: Vec<String> = ascii_runs(payload)
+        .filter(|s| s.len() <= MAX_STRING_PAYLOAD_BYTES)
+        .collect();
+    if runs.is_empty() {
+        return;
+    }
+    for id in detected.counts.keys() {
+        let value = runs[0].clone();
+        let key = (*id, value);
+        if a.threat_strings.len() < MAX_STRING_ENTRIES || a.threat_strings.contains_key(&key) {
+            *a.threat_strings.entry(key).or_default() += 1;
+        }
+    }
+}
+
+fn ascii_runs<'a>(payload: &'a [u8]) -> impl Iterator<Item = String> + 'a {
+    payload
+        .split(|byte| !(0x20..=0x7e).contains(byte))
+        .filter_map(|run| {
+            (run.len() >= MIN_ASCII_STRING_BYTES).then(|| String::from_utf8(run.to_vec()).unwrap())
+        })
+}
+
+fn string_entries(mut values: HashMap<String, u64>) -> Vec<StringEntry> {
+    let mut entries: Vec<_> = values
+        .drain()
+        .map(|(payload, count)| StringEntry { payload, count })
+        .collect();
+    entries.sort_by(|a, b| b.count.cmp(&a.count).then(a.payload.cmp(&b.payload)));
+    entries
+}
+
+fn threat_string_entries(values: &HashMap<(&'static str, String), u64>) -> Vec<ThreatStringEntry> {
+    let mut entries: Vec<_> = values
+        .iter()
+        .map(|((id, payload), count)| {
+            let rule = THREAT_CATALOG.iter().find(|rule| rule.id == *id);
+            let desc = rule.map(|r| r.description).unwrap_or("Ameaça detectada.");
+            ThreatStringEntry {
+                threat_type: rule.map(|r| r.title).unwrap_or(id).into(),
+                threat_desc: desc.into(),
+                threat_explanation: desc.into(),
+                payload: payload.clone(),
+                count: *count,
+            }
+        })
+        .collect();
+    entries.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then(a.threat_type.cmp(&b.threat_type))
+            .then(a.payload.cmp(&b.payload))
+    });
+    entries
+}
+
 fn evaluate_threats(
     counts: &mut ThreatCounts,
     src: Option<u16>,
@@ -879,6 +1017,15 @@ fn analyze_packet(data: &[u8], linktype: i32, externally_truncated: bool, a: &mu
         _ => &[],
     };
     evaluate_threats(&mut a.threats, src_port, dst_port, protocol, payload);
+    collect_strings(a, payload, externally_truncated || incomplete);
+    collect_threat_strings(
+        a,
+        src_port,
+        dst_port,
+        protocol,
+        payload,
+        externally_truncated || incomplete,
+    );
     if protocol == "TCP" && (src_port == Some(53) || dst_port == Some(53)) {
         a.dns_tcp += 1;
     } else if protocol == "UDP" && (src_port == Some(53) || dst_port == Some(53)) {
@@ -1188,6 +1335,36 @@ mod tests {
         assert_eq!(parse_dns_query(&compressed), DnsParseOutcome::Compressed);
         assert_eq!(parse_dns_query(&a[..15]), DnsParseOutcome::Malformed);
     }
+    #[test]
+    fn strings_keep_only_owned_ascii_runs_and_reject_truncated_payloads() {
+        let mut acc = Acc::default();
+        collect_strings(&mut acc, b"user=alice\0\xffsecret", false);
+        assert_eq!(acc.all_strings.get("user=alice"), Some(&1));
+        assert!(acc.all_strings.contains_key("secret"));
+        assert!(
+            !acc.all_strings
+                .keys()
+                .any(|value| value.contains('\u{fffd}'))
+        );
+        let before = acc.all_strings.clone();
+        collect_strings(&mut acc, b"never-retain", true);
+        assert_eq!(acc.all_strings, before);
+        collect_strings(&mut acc, &[b'x'; MAX_STRING_PAYLOAD_BYTES + 1], false);
+        assert_eq!(acc.all_strings, before);
+    }
+
+    #[test]
+    fn threat_strings_require_ascii_payload_and_are_bounded() {
+        let mut acc = Acc::default();
+        evaluate_threats(&mut acc.threats, Some(1234), Some(80), "TCP", b"nmap");
+        collect_threat_strings(&mut acc, Some(1234), Some(80), "TCP", b"nmap", false);
+        let entries = threat_string_entries(&acc.threat_strings);
+        assert_eq!(entries[0].payload, "nmap");
+        assert_eq!(entries[0].threat_type, "Scanners conhecidos");
+        collect_threat_strings(&mut acc, Some(1234), Some(80), "TCP", &[0xff, 0], false);
+        assert_eq!(threat_string_entries(&acc.threat_strings).len(), 1);
+    }
+
     fn dns_query(name: &[u8], qtype: u16) -> Vec<u8> {
         let mut out = vec![0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
         for label in name.split(|b| *b == b'.') {

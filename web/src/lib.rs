@@ -65,14 +65,23 @@ const PYWEBVIEW_COMPAT: &str = r#"(() => {
     get_catalog: () => call('get_catalog').then(data => data.rules || data),
     pick_files: () => new Promise(resolve => { input.value = ''; input.onchange = () => { selectedFiles = Array.from(input.files || []).slice(0, 50); resolve(selectedFiles.map(file => file.name)); }; input.click(); }),
     analyze_files: () => analyze(),
-    get_string_filter_types: () => call('get_string_filter_types'),
-    get_analysis_strings: args => call('get_analysis_strings', { args }),
+    get_string_filter_types: () => {
+      if (!analysisJobId) return Promise.reject(new Error('Nenhuma análise concluída.'));
+      return call('get_string_filter_types', { args: [], job_id: analysisJobId });
+    },
+    get_analysis_strings: (limit, offset, filterType) => {
+      if (!analysisJobId) return Promise.reject(new Error('Nenhuma análise concluída.'));
+      return call('get_analysis_strings', { args: [limit, offset, filterType], job_id: analysisJobId }).then(data => data.items);
+    },
     get_dns_records: (limit, offset) => {
       if (!analysisJobId) return Promise.reject(new Error('Nenhuma análise concluída.'));
       return call('get_dns_records', { args: [limit, offset], job_id: analysisJobId })
         .then(data => data.items);
     },
-    get_all_strings: args => call('get_all_strings', { args })
+    get_all_strings: (limit, offset) => {
+      if (!analysisJobId) return Promise.reject(new Error('Nenhuma análise concluída.'));
+      return call('get_all_strings', { args: [limit, offset], job_id: analysisJobId }).then(data => data.items);
+    }
   }};
   window.dispatchEvent(new Event('pywebviewready'));
 })();
@@ -95,6 +104,8 @@ struct Job {
     result: JobResult,
     dns: Vec<capture::DnsEntry>,
     dns_records: Vec<capture::DnsParityEntry>,
+    strings: Vec<capture::StringEntry>,
+    threat_strings: Vec<capture::ThreatStringEntry>,
 }
 
 #[derive(Clone, Serialize)]
@@ -191,6 +202,14 @@ async fn pywebview_api(
         return get_dns_records_for_bridge(State(state), Json(payload))
             .await
             .map(|Json(response)| Json(serde_json::to_value(response).unwrap()));
+    }
+    if matches!(
+        method.as_str(),
+        "get_string_filter_types" | "get_analysis_strings" | "get_all_strings"
+    ) {
+        return get_strings_for_bridge(State(state), Path(method), Json(payload))
+            .await
+            .map(|Json(response)| Json(response));
     }
     match method.as_str() {
         "get_app_version" => Ok(Json(serde_json::json!("5.0"))),
@@ -312,6 +331,16 @@ async fn create_job(
             result: result.clone(),
             dns,
             dns_records: Vec::new(),
+            strings: result
+                .metrics
+                .as_ref()
+                .map(|m| m.string_entries.clone())
+                .unwrap_or_default(),
+            threat_strings: result
+                .metrics
+                .as_ref()
+                .map(|m| m.threat_string_entries.clone())
+                .unwrap_or_default(),
         },
     );
     Ok((status, Json(result)))
@@ -486,6 +515,16 @@ async fn create_aggregate_job(
             result: result.clone(),
             dns,
             dns_records,
+            strings: result
+                .metrics
+                .as_ref()
+                .map(|m| m.string_entries.clone())
+                .unwrap_or_default(),
+            threat_strings: result
+                .metrics
+                .as_ref()
+                .map(|m| m.threat_string_entries.clone())
+                .unwrap_or_default(),
         },
     );
     Ok((StatusCode::CREATED, Json(result)))
@@ -620,6 +659,125 @@ async fn get_dns_records_for_bridge(
         total,
         items: job.dns_records[start..end].to_vec(),
     }))
+}
+
+async fn get_strings_for_bridge(
+    State(state): State<AppState>,
+    Path(method): Path<String>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
+    let job_id = payload
+        .get("job_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::CONFLICT,
+                "analysis_required",
+                "nenhuma análise agregada concluída",
+            )
+        })?;
+    cleanup_expired(&state).await;
+    let jobs = state.jobs.lock().await;
+    let job = jobs.get(job_id).ok_or_else(|| {
+        api_error(
+            StatusCode::NOT_FOUND,
+            "job_not_found",
+            "job não encontrado ou expirado",
+        )
+    })?;
+    let args = payload
+        .get("args")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if method == "get_string_filter_types" {
+        if !args.is_empty() {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_arguments",
+                "esta API não aceita argumentos",
+            ));
+        }
+        let mut types: Vec<_> = job
+            .threat_strings
+            .iter()
+            .map(|item| item.threat_type.clone())
+            .collect();
+        types.sort();
+        types.dedup();
+        return Ok(Json(serde_json::json!(types)));
+    }
+    let expected = if method == "get_analysis_strings" {
+        3
+    } else {
+        2
+    };
+    if args.len() != expected {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_pagination",
+            "quantidade de argumentos inválida",
+        ));
+    }
+    let limit = args[0].as_u64().ok_or_else(|| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_pagination",
+            "limit deve ser um inteiro",
+        )
+    })?;
+    let offset = args[1].as_u64().ok_or_else(|| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_pagination",
+            "offset deve ser um inteiro",
+        )
+    })?;
+    if !(1..=100).contains(&limit) {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_pagination",
+            "limit deve estar entre 1 e 100",
+        ));
+    }
+    let (items, total): (Vec<serde_json::Value>, u64) = if method == "get_analysis_strings" {
+        let filter = args[2].as_str();
+        let filtered: Vec<_> = job
+            .threat_strings
+            .iter()
+            .filter(|item| filter.is_none() || Some(item.threat_type.as_str()) == filter)
+            .cloned()
+            .collect();
+        let total = filtered.len() as u64;
+        (
+            filtered
+                .into_iter()
+                .map(|item| serde_json::to_value(item).unwrap())
+                .collect(),
+            total,
+        )
+    } else {
+        let total = job.strings.len() as u64;
+        (
+            job.strings
+                .iter()
+                .map(|item| serde_json::to_value(item).unwrap())
+                .collect(),
+            total,
+        )
+    };
+    if offset > total {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_pagination",
+            "offset excede o total de itens",
+        ));
+    }
+    let start = offset as usize;
+    let end = start.saturating_add(limit as usize).min(items.len());
+    Ok(Json(
+        serde_json::json!({ "contract_version": "pcap-doctor.strings-page.v1", "job_id": job_id, "limit": limit, "offset": offset, "total": total, "items": &items[start..end] }),
+    ))
 }
 
 async fn receive_and_parse(

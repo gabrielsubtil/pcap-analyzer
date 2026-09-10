@@ -20,15 +20,23 @@ Context7, biblioteca `/tokio-rs/axum/axum_v0_7_9`, consultada em 2026-09-10: doc
 ## Jornada Desktop no browser
 
 - `pick_files` mantém os `File` reais em um fechamento privado, preserva a ordem do `FileList`, limita a seleção aos primeiros 50 e devolve somente os nomes esperados pelo `app.js`.
-- `analyze_files` envia cada `File` selecionado, em ordem, como `file` no `POST /api/jobs` usando `FormData`; o browser define o boundary multipart.
+- `analyze_files` envia cada `File` selecionado, em ordem, no campo `file` do `POST /api/jobs/aggregate` usando `FormData`; o browser define o boundary multipart.
 - Jobs completos são agregados em camelCase para o Dashboard. `topTalkers` e `topDestinations` são pares `[ip, contagem]`, no formato consumido pelo Desktop; `threatStats` expõe somente `{title, description, count}`, derivados do catálogo Desktop.
 - A cardinalidade global de origem/destino em múltiplos arquivos é calculada pela união dos valores de IP emitidos por cada job, nunca pela soma dos contadores. Esses valores são limitados indiretamente a `MAX_PACKETS` por captura; a análise recusa capturas acima desse limite.
 - `packetSizeStats` é medido pelo tamanho capturado de cada pacote e agregado entre jobs; não é um campo sintético.
 - Jobs ou uploads com falha viram `Error` controlado e chegam ao tratamento de erro existente do Desktop.
 
-## Superfícies ainda indisponíveis
+## Superfícies de Strings
 
-Strings (`get_string_filter_types`, `get_analysis_strings`, `get_all_strings`), Whois e demais consultas de enriquecimento continuam sem backend de paridade e retornam `501 method_not_implemented`. DNS agora cobre a jornada de análise agregada pela bridge, mantendo o contrato legado de arquivo único.
+As três APIs Strings do Desktop têm paridade limitada e somente para o `job_id` da última análise agregada:
+
+- `get_string_filter_types()` retorna os filtros presentes nas entradas de ameaça.
+- `get_analysis_strings(limit, offset, filterType)` retorna itens `{threatType, threatDesc, threatExplanation, payload, count}`.
+- `get_all_strings(limit, offset)` retorna itens `{payload, count}`.
+
+Os resultados são cópias próprias, paginados com limite 1–100 e limitados a 10.000 entradas e payloads ASCII contíguos de 3–256 bytes. Pacotes sem payload ASCII legível, criptografados ou truncados não são apresentados como strings.
+
+Chamadas antes de uma análise, para job expirado/inexistente ou com aridade/paginação inválida retornam erros JSON controlados.
 
 ## TDD registrado
 
@@ -39,4 +47,4 @@ Strings (`get_string_filter_types`, `get_analysis_strings`, `get_all_strings`), 
 
 ## Próximas superfícies
 
-Strings e Whois ainda retornam `501 method_not_implemented`; não fazem parte desta fatia DNS.
+Whois e demais consultas de enriquecimento ainda retornam `501 method_not_implemented`.
