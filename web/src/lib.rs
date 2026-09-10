@@ -25,9 +25,11 @@ const DESKTOP_INDEX: &[u8] = include_bytes!("../../src/frontend/index.html");
 const DESKTOP_STYLES: &[u8] = include_bytes!("../../src/frontend/styles.css");
 const DESKTOP_APP: &[u8] = include_bytes!("../../src/frontend/app.js");
 const DESKTOP_LOGO: &[u8] = include_bytes!("../../src/frontend/assets/logo.png");
+const WEB_UI_CSS: &[u8] = include_bytes!("../ui.css");
+const WEB_UI_SCRIPT: &[u8] = include_bytes!("../ui.js");
 const DESKTOP_APP_SCRIPT_TAG: &str = "    <script src=\"app.js\"></script>";
 const WEB_APP_SCRIPT_TAGS: &str =
-    "    <script src=\"/pywebview-compat.js\"></script>\n    <script src=\"app.js\"></script>";
+    "    <script src=\"/pywebview-compat.js\"></script>\n    <script src=\"app.js\"></script>\n    <script src=\"/web-ui.js\"></script>";
 const PYWEBVIEW_COMPAT: &str = r#"(() => {
   const call = (method, payload = {}) => fetch(`/api/pywebview/${method}`, {
     method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(payload)
@@ -151,7 +153,9 @@ pub fn app_with_state(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/styles.css", get(styles))
+        .route("/web-ui.css", get(web_ui_styles))
         .route("/app.js", get(app_script))
+        .route("/web-ui.js", get(web_ui_script))
         .route("/assets/logo.png", get(logo))
         .route("/pywebview-compat.js", get(pywebview_compat))
         .route("/api/health", get(health))
@@ -172,8 +176,24 @@ fn static_asset(body: impl IntoResponse, content_type: &'static str) -> Response
     response
 }
 async fn index() -> Response {
-    let html =
-        String::from_utf8_lossy(DESKTOP_INDEX).replace(DESKTOP_APP_SCRIPT_TAG, WEB_APP_SCRIPT_TAGS);
+    let sidebar = r#"
+        <aside id="web-sidebar" aria-label="Navegação da análise">
+            <div class="sidebar-label">Navegação</div>
+            <nav>
+                <button type="button" data-view="dashboard" disabled>▦ <span>Dashboard</span></button>
+                <button type="button" data-view="strings" disabled>⌕ <span>Strings (ameaças)</span></button>
+                <button type="button" data-view="all-strings" disabled>≡ <span>Todas as strings</span></button>
+                <button type="button" data-view="dns" disabled>◎ <span>DNS</span></button>
+                <button type="button" data-view="whois" disabled>⌁ <span>Whois</span></button>
+                <button type="button" data-view="threats">✓ <span>Catálogo</span></button>
+            </nav>
+            <div class="sidebar-status"><strong id="web-analysis-status">Nenhuma análise carregada</strong>Upload-first · dados temporários</div>
+        </aside>
+    "#;
+    let html = String::from_utf8_lossy(DESKTOP_INDEX)
+        .replace("    <link rel=\"stylesheet\" href=\"styles.css\">", "    <link rel=\"stylesheet\" href=\"styles.css\">\n    <link rel=\"stylesheet\" href=\"/web-ui.css\">")
+        .replace("    <main class=\"max-w-7xl mx-auto px-4 py-8\">", &format!("{sidebar}\n    <main class=\"max-w-7xl mx-auto px-4 py-8\">"))
+        .replace(DESKTOP_APP_SCRIPT_TAG, WEB_APP_SCRIPT_TAGS);
     let mut response = html.into_response();
     response.headers_mut().insert(
         CONTENT_TYPE,
@@ -184,8 +204,14 @@ async fn index() -> Response {
 async fn styles() -> Response {
     static_asset(DESKTOP_STYLES, "text/css; charset=utf-8")
 }
+async fn web_ui_styles() -> Response {
+    static_asset(WEB_UI_CSS, "text/css; charset=utf-8")
+}
 async fn app_script() -> Response {
     static_asset(DESKTOP_APP, "text/javascript; charset=utf-8")
+}
+async fn web_ui_script() -> Response {
+    static_asset(WEB_UI_SCRIPT, "text/javascript; charset=utf-8")
 }
 async fn logo() -> Response {
     static_asset(DESKTOP_LOGO, "image/png")

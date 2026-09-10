@@ -21,13 +21,8 @@ async fn home_page_identifies_pcap_doctor_homologation() {
         .unwrap();
     let app = html.find("<script src=\"app.js\"></script>").unwrap();
     assert!(compat < app, "pywebview bridge must precede app.js");
-    assert_eq!(
-        html,
-        String::from_utf8(include_bytes!("../../src/frontend/index.html").to_vec())
-            .unwrap()
-            .replace(
-                "    <script src=\"app.js\"></script>",
-                "    <script src=\"/pywebview-compat.js\"></script>\n    <script src=\"app.js\"></script>",
-            )
-    );
+    assert!(html.contains("id=\"web-sidebar\""));
+    assert!(html.contains("id=\"web-analysis-status\""));
+    assert!(html.contains("/web-ui.css"));
+    assert!(html.contains("/web-ui.js"));
 }
