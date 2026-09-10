@@ -94,16 +94,27 @@ jobs:
           IMAGE: ${{ steps.image.outputs.image }}
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
+          set -euo pipefail
           test -n "$DIGEST"
           case "$DIGEST" in sha256:*) ;; *) echo "Unexpected digest: $DIGEST" >&2; exit 1 ;; esac
-          docker buildx imagetools inspect "${IMAGE%@*}@${DIGEST}" | tee /tmp/pcap-doctor-image.txt
-          grep -F 'linux/arm64' /tmp/pcap-doctor-image.txt
+          reference="${IMAGE%@*}@${DIGEST}"
+          manifest_json="$(docker buildx imagetools inspect --format '{{json .Manifest}}' "$reference")"
+          printf '%s\n' "$manifest_json" | tee /tmp/pcap-doctor-image-manifest.json >/dev/null
+          verified_digest="$(jq -er '.digest' <<<"$manifest_json")"
+          test "$verified_digest" = "$DIGEST"
+
+          platform_json="$(docker buildx imagetools inspect --format '{{json (index .Image "linux/arm64")}}' "$reference")"
+          printf '%s\n' "$platform_json" | tee /tmp/pcap-doctor-image-platform.json >/dev/null
+          jq -e '(.os == "linux") and (.architecture == "arm64")' \
+            /tmp/pcap-doctor-image-platform.json >/dev/null
+
           {
             echo "### Published image"
             echo
-            echo "Image: ${IMAGE%@*}@${DIGEST}"
+            echo "Image: $reference"
             echo
-            echo 'Platform verified: linux/arm64'
+            echo "Verified digest: $verified_digest"
+            echo 'Platform verified: linux/arm64 (os=linux, architecture=arm64)'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Generate container provenance attestation
