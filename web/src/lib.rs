@@ -1,3 +1,5 @@
+pub mod capture;
+
 use axum::{
     http::{header::CONTENT_TYPE, HeaderMap, StatusCode},
     response::Html,
