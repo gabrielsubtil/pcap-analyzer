@@ -20,7 +20,8 @@ async fn body(response: axum::response::Response) -> Vec<u8> {
 async fn serves_desktop_frontend_artifacts_and_web_shell() {
     let response = app()
         .oneshot(Request::get("/").body(Body::empty()).unwrap())
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let html = String::from_utf8(body(response).await).unwrap();
     assert!(html.contains("id=\"web-sidebar\""));

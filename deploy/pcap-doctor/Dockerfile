@@ -3,6 +3,8 @@ WORKDIR /build
 COPY web/Cargo.toml web/Cargo.lock ./
 RUN mkdir src && printf 'fn main() {}\n' > src/main.rs && cargo build --release --locked && rm -rf src
 COPY web/src ./src
+# The Web shell embeds the authoritative Desktop frontend assets at compile time.
+COPY src/frontend /src/frontend
 COPY web/index.html ./index.html
 RUN cargo build --release --locked
 

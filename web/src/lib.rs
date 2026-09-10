@@ -28,8 +28,7 @@ const DESKTOP_LOGO: &[u8] = include_bytes!("../../src/frontend/assets/logo.png")
 const WEB_UI_CSS: &[u8] = include_bytes!("../ui.css");
 const WEB_UI_SCRIPT: &[u8] = include_bytes!("../ui.js");
 const DESKTOP_APP_SCRIPT_TAG: &str = "    <script src=\"app.js\"></script>";
-const WEB_APP_SCRIPT_TAGS: &str =
-    "    <script src=\"/pywebview-compat.js\"></script>\n    <script src=\"app.js\"></script>\n    <script src=\"/web-ui.js\"></script>";
+const WEB_APP_SCRIPT_TAGS: &str = "    <script src=\"/pywebview-compat.js\"></script>\n    <script src=\"app.js\"></script>\n    <script src=\"/web-ui.js\"></script>";
 const PYWEBVIEW_COMPAT: &str = r#"(() => {
   const call = (method, payload = {}) => fetch(`/api/pywebview/${method}`, {
     method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(payload)
