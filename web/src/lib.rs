@@ -25,6 +25,9 @@ const DESKTOP_INDEX: &[u8] = include_bytes!("../../src/frontend/index.html");
 const DESKTOP_STYLES: &[u8] = include_bytes!("../../src/frontend/styles.css");
 const DESKTOP_APP: &[u8] = include_bytes!("../../src/frontend/app.js");
 const DESKTOP_LOGO: &[u8] = include_bytes!("../../src/frontend/assets/logo.png");
+const DESKTOP_APP_SCRIPT_TAG: &str = "    <script src=\"app.js\"></script>";
+const WEB_APP_SCRIPT_TAGS: &str =
+    "    <script src=\"/pywebview-compat.js\"></script>\n    <script src=\"app.js\"></script>";
 const PYWEBVIEW_COMPAT: &str = r#"(() => {
   const call = (method, payload = {}) => fetch(`/api/pywebview/${method}`, {
     method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(payload)
@@ -111,15 +114,22 @@ pub fn app_with_state(state: AppState) -> Router {
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES as usize))
         .with_state(state)
 }
-fn static_asset(bytes: &'static [u8], content_type: &'static str) -> Response {
-    let mut response = bytes.into_response();
+fn static_asset(body: impl IntoResponse, content_type: &'static str) -> Response {
+    let mut response = body.into_response();
     response
         .headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
     response
 }
 async fn index() -> Response {
-    static_asset(DESKTOP_INDEX, "text/html; charset=utf-8")
+    let html =
+        String::from_utf8_lossy(DESKTOP_INDEX).replace(DESKTOP_APP_SCRIPT_TAG, WEB_APP_SCRIPT_TAGS);
+    let mut response = html.into_response();
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response
 }
 async fn styles() -> Response {
     static_asset(DESKTOP_STYLES, "text/css; charset=utf-8")

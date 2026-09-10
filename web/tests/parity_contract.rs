@@ -18,11 +18,16 @@ async fn body(response: axum::response::Response) -> Vec<u8> {
 
 #[tokio::test]
 async fn serves_desktop_frontend_artifacts_byte_for_byte() {
+    let expected_index = String::from_utf8(
+        include_bytes!("../../src/frontend/index.html").to_vec(),
+    )
+    .unwrap()
+    .replace(
+        "    <script src=\"app.js\"></script>",
+        "    <script src=\"/pywebview-compat.js\"></script>\n    <script src=\"app.js\"></script>",
+    );
     let cases = [
-        (
-            "/",
-            include_bytes!("../../src/frontend/index.html").as_slice(),
-        ),
+        ("/", expected_index.as_bytes()),
         (
             "/styles.css",
             include_bytes!("../../src/frontend/styles.css").as_slice(),
@@ -45,6 +50,22 @@ async fn serves_desktop_frontend_artifacts_byte_for_byte() {
         assert_eq!(response.status(), StatusCode::OK, "{uri}");
         assert_eq!(body(response).await, expected, "{uri} differs from Desktop");
     }
+}
+
+#[tokio::test]
+async fn browser_loads_pywebview_bridge_before_app_script() {
+    let response = app()
+        .oneshot(Request::get("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let html = String::from_utf8(body(response).await).unwrap();
+    let compat_tag = "<script src=\"/pywebview-compat.js\"></script>";
+    let app_tag = "<script src=\"app.js\"></script>";
+    let compat = html.find(compat_tag).expect("bridge script tag missing");
+    let app = html.find(app_tag).expect("app script tag missing");
+    assert!(compat < app, "bridge must be parsed before app.js");
+    assert!(!html[compat..app].contains("async"));
+    assert!(!html[compat..app].contains("defer"));
 }
 
 #[tokio::test]
