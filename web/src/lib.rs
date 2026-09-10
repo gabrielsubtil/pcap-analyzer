@@ -72,6 +72,7 @@ pub fn app_with_state(state: AppState) -> Router {
     Router::new()
         .route("/", get(home))
         .route("/api/health", get(health))
+        .route("/api/threat-catalog", get(threat_catalog))
         .route("/api/jobs", post(create_job))
         .route("/api/jobs/{job_id}", get(get_job))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES as usize))
@@ -84,6 +85,21 @@ async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         phase: "homologation",
+    })
+}
+
+#[derive(Serialize)]
+struct ThreatCatalogResponse {
+    contract_version: &'static str,
+    heuristic_notice: &'static str,
+    rules: Vec<capture::ThreatSummaryEntry>,
+}
+
+async fn threat_catalog() -> Json<ThreatCatalogResponse> {
+    Json(ThreatCatalogResponse {
+        contract_version: "pcap-doctor.threat-catalog.v1",
+        heuristic_notice: "Estas regras são heurísticas; não provam comprometimento.",
+        rules: capture::catalog(),
     })
 }
 

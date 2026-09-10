@@ -10,6 +10,20 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 #### Adicionado
 
+- **Resumo de ameaças heurísticas v1:** contrato limitado a `rule_id`, `title`, `description` e `count`, cobrindo portas suspeitas, porta 0, amplificação/reflexão e regras low-to-low do Desktop.
+- **Catálogo:** endpoint `GET /api/threat-catalog` com explicações em PT-BR e aviso de que heurísticas não provam comprometimento.
+- **Assinaturas seguras:** cinco categorias detectadas por substring fixa ASCII case-insensitive, com limite de 64 KiB por payload e apenas contadores agregados; nenhum payload é persistido ou retornado.
+- **UI:** seção de ameaças heurísticas renderiza somente título, descrição e contagem.
+
+#### Alterado
+
+- A UI upload-first agora renderiza as métricas retornadas, em vez de exibir apenas o placeholder de assinatura.
+
+#### Limitações conhecidas
+
+- Este slice suporta análise limitada de Ethernet II/Linux SLL para IPv4 TCP/UDP/ICMPv4; IPv6, ARP e demais protocolos/linktypes aparecem como não analisados.
+- **Desvio intencional do Desktop:** as regexes de payload foram substituídas por busca literal fixa e limitada, sem curingas, alternância ou engine regex; `Authorization: ***` é tratado como o literal seguro `authorization:`. Isso reduz cobertura, evita backtracking e impede vazamento de dados.
+
 - **Parsing streaming seguro:** `pcap-parser` 0.17 processa PCAP legado e PCAPNG com métricas contidas, contrato JSON versionado e descarte das fatias zero-copy antes de cada refill.
 - **Limites explícitos:** upload de 64 MiB, buffer de 16 MiB, frame de 16 MiB, 1.000.000 de blocos/pacotes e deadline de 5 s.
 - **Resumo de protocolos v2:** `etherparse` 0.21 em modo lax analisa Ethernet II (1) e Linux SLL (113) para IPv4 TCP/UDP/ICMPv4, com totais de pacotes/bytes, portas, IPs únicos e top 10 talkers/destinos.

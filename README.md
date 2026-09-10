@@ -36,7 +36,9 @@ O **PCAP Analyzer** elimina a necessidade de ferramentas complexas como Wireshar
 ### Funcionalidades
 
 - **Multiformato**: Suporte nativo para PCAP e PCAPNG.
-- **Análise de Ameaças**: Detecção baseada em assinaturas e comportamento de tráfego.
+- **Análise de Ameaças**: Detecção baseada em assinaturas fixas limitadas e comportamento de tráfego. O Web retorna somente contagens agregadas.
+- **Resumo heurístico Web**: portas suspeitas, porta 0, vetores de amplificação/reflexão e regras low-to-low do Desktop; heurísticas não provam comprometimento.
+- **Catálogo Web**: `GET /api/threat-catalog` descreve cada regra em PT-BR.
 - **Dashboard Rico**: Visualização clara de volumes, protocolos e top talkers.
 - **Inspeção de Payload**: Extração e busca de strings em pacotes suspeitos.
 - **Standalone**: Não requer instalação de drivers ou ferramentas externas.

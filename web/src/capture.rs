@@ -13,6 +13,7 @@ pub const MAX_PACKET_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_PACKETS: u64 = 1_000_000;
 pub const MAX_BLOCKS: u64 = 1_000_000;
 const TOP_N: usize = 10;
+const MAX_SIGNATURE_SCAN_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureFormat {
@@ -93,6 +94,14 @@ pub struct CaptureMetrics {
     pub unsupported_formats: Vec<&'static str>,
     pub unsupported_linktypes: Vec<i32>,
     pub summary: ProtocolSummary,
+    pub threat_summary: Vec<ThreatSummaryEntry>,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct ThreatSummaryEntry {
+    pub rule_id: &'static str,
+    pub title: &'static str,
+    pub description: &'static str,
+    pub count: u64,
 }
 #[derive(Debug)]
 pub enum ParseError {
@@ -112,6 +121,264 @@ struct Acc {
     dst_ips: BTreeSet<Ipv4Addr>,
     talkers: HashMap<Ipv4Addr, u64>,
     destinations: HashMap<Ipv4Addr, u64>,
+    threats: ThreatCounts,
+}
+
+#[derive(Default)]
+struct ThreatCounts {
+    counts: HashMap<&'static str, u64>,
+}
+
+impl ThreatCounts {
+    fn add(&mut self, id: &'static str) {
+        *self.counts.entry(id).or_default() += 1;
+    }
+    fn entries(&self) -> Vec<ThreatSummaryEntry> {
+        let mut entries: Vec<_> = THREAT_CATALOG
+            .iter()
+            .filter_map(|rule| {
+                self.counts.get(rule.id).map(|count| ThreatSummaryEntry {
+                    rule_id: rule.id,
+                    title: rule.title,
+                    description: rule.description,
+                    count: *count,
+                })
+            })
+            .collect();
+        entries.sort_by(|a, b| b.count.cmp(&a.count).then(a.rule_id.cmp(b.rule_id)));
+        entries
+    }
+}
+
+struct ThreatDefinition {
+    id: &'static str,
+    title: &'static str,
+    description: &'static str,
+}
+
+const THREAT_CATALOG: &[ThreatDefinition] = &[
+    ThreatDefinition {
+        id: "suspicious_port_21",
+        title: "Porta 21 (FTP)",
+        description: "Tráfego FTP não criptografado.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_23",
+        title: "Porta 23 (Telnet)",
+        description: "Acesso Telnet inseguro.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_6667",
+        title: "Porta 6667 (IRC)",
+        description: "Tráfego IRC potencialmente associado a botnet.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_445",
+        title: "Porta 445 (SMB)",
+        description: "Exposição SMB/CIFS.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_139",
+        title: "Porta 139 (NetBIOS)",
+        description: "Sessão NetBIOS exposta.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_137",
+        title: "Porta 137 (NetBIOS)",
+        description: "Serviço de nomes NetBIOS.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_135",
+        title: "Porta 135 (RPC)",
+        description: "Mapeador RPC exposto.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_3389",
+        title: "Porta 3389 (RDP)",
+        description: "Acesso remoto RDP.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_161",
+        title: "Porta 161 (SNMP)",
+        description: "Gerenciamento SNMP exposto.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_389",
+        title: "Porta 389 (LDAP)",
+        description: "LDAP não criptografado.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_636",
+        title: "Porta 636 (LDAPS)",
+        description: "Catálogo LDAP seguro exposto.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_3268",
+        title: "Porta 3268 (AD)",
+        description: "Catálogo Global AD exposto.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_3269",
+        title: "Porta 3269 (AD seguro)",
+        description: "Catálogo Global AD seguro exposto.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_111",
+        title: "Porta 111 (RPC)",
+        description: "RPC Portmapper exposto.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_2049",
+        title: "Porta 2049 (NFS)",
+        description: "NFS exposto.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_1433",
+        title: "Porta 1433 (MSSQL)",
+        description: "SQL Server exposto.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_3306",
+        title: "Porta 3306 (MySQL)",
+        description: "MySQL/MariaDB exposto.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_5432",
+        title: "Porta 5432 (PostgreSQL)",
+        description: "PostgreSQL exposto.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_6379",
+        title: "Porta 6379 (Redis)",
+        description: "Redis exposto.",
+    },
+    ThreatDefinition {
+        id: "suspicious_port_27017",
+        title: "Porta 27017 (MongoDB)",
+        description: "MongoDB exposto.",
+    },
+    ThreatDefinition {
+        id: "invalid_port_0",
+        title: "Tráfego inválido (porta 0)",
+        description: "Uso da porta 0 reservada na origem ou destino.",
+    },
+    ThreatDefinition {
+        id: "ssdp_amp",
+        title: "Amplificação SSDP",
+        description: "Tráfego originado na porta 1900.",
+    },
+    ThreatDefinition {
+        id: "snmp_amp",
+        title: "Amplificação SNMP",
+        description: "Tráfego originado na porta 161.",
+    },
+    ThreatDefinition {
+        id: "mdns_amp",
+        title: "Amplificação mDNS",
+        description: "Tráfego originado na porta 5353.",
+    },
+    ThreatDefinition {
+        id: "memcached_amp",
+        title: "Amplificação Memcached",
+        description: "Tráfego originado na porta 11211.",
+    },
+    ThreatDefinition {
+        id: "cldap_amp",
+        title: "Reflexão CLDAP",
+        description: "Tráfego UDP originado na porta 389.",
+    },
+    ThreatDefinition {
+        id: "ntp_amp_src",
+        title: "Reflexão NTP",
+        description: "Tráfego originado na porta 123 para destino diferente de 123.",
+    },
+    ThreatDefinition {
+        id: "chargen_abuse",
+        title: "Serviço Chargen",
+        description: "Tráfego originado na porta 19.",
+    },
+    ThreatDefinition {
+        id: "ntp_abuse_low_port",
+        title: "Acesso indevido NTP",
+        description: "Origem baixa diferente de 123 para destino 123.",
+    },
+    ThreatDefinition {
+        id: "chargen_dst_abuse",
+        title: "Destino Chargen",
+        description: "Tráfego destinado à porta 19.",
+    },
+    ThreatDefinition {
+        id: "web_low_source",
+        title: "Web low-to-low",
+        description: "Origem 1-1023 para portas web.",
+    },
+    ThreatDefinition {
+        id: "ms_rpc_smb_low",
+        title: "Windows low-to-low",
+        description: "Origem 1-1023 para RPC/SMB.",
+    },
+    ThreatDefinition {
+        id: "netbios_low",
+        title: "NetBIOS low-to-low",
+        description: "Origem 1-1023 para NetBIOS.",
+    },
+    ThreatDefinition {
+        id: "unix_nfs_low",
+        title: "NFS/RPC low-to-low",
+        description: "Origem 1-1023 para NFS/RPC.",
+    },
+    ThreatDefinition {
+        id: "remote_infra_low",
+        title: "Infra low-to-low",
+        description: "Origem 1-1023 para SSH/Telnet/RDP/FTP.",
+    },
+    ThreatDefinition {
+        id: "reflection_vectors_low",
+        title: "Vetor de reflexão low-to-low",
+        description: "Origem 1-1023 para SSDP/mDNS/LDAP.",
+    },
+    ThreatDefinition {
+        id: "dns_low_to_low",
+        title: "DNS low-to-low",
+        description: "Origem 0-1023 diferente de 53 para destino 53.",
+    },
+    ThreatDefinition {
+        id: "sig-scanners",
+        title: "Scanners conhecidos",
+        description: "Assinatura fixa de ferramentas de reconhecimento.",
+    },
+    ThreatDefinition {
+        id: "sig-webshells",
+        title: "Webshells PHP comuns",
+        description: "Assinatura fixa de funções PHP críticas.",
+    },
+    ThreatDefinition {
+        id: "sig-auth",
+        title: "Auth fraca",
+        description: "Assinatura fixa de cabeçalho Authorization.",
+    },
+    ThreatDefinition {
+        id: "sig-xss",
+        title: "XSS",
+        description: "Assinatura fixa de injeção de script.",
+    },
+    ThreatDefinition {
+        id: "sig-rce",
+        title: "RCE",
+        description: "Assinatura fixa de chamadas ao shell.",
+    },
+];
+
+pub fn catalog() -> Vec<ThreatSummaryEntry> {
+    THREAT_CATALOG
+        .iter()
+        .map(|rule| ThreatSummaryEntry {
+            rule_id: rule.id,
+            title: rule.title,
+            description: rule.description,
+            count: 0,
+        })
+        .collect()
 }
 
 pub fn parse_capture(path: &Path, file_bytes: u64) -> Result<CaptureMetrics, ParseError> {
@@ -239,6 +506,118 @@ pub fn parse_capture(path: &Path, file_bytes: u64) -> Result<CaptureMetrics, Par
             top_talkers: ips(acc.talkers),
             top_destinations: ips(acc.destinations),
         },
+        threat_summary: acc.threats.entries(),
+    })
+}
+
+fn evaluate_threats(
+    counts: &mut ThreatCounts,
+    src: Option<u16>,
+    dst: Option<u16>,
+    protocol: &str,
+    payload: &[u8],
+) {
+    let (Some(src), Some(dst)) = (src, dst) else {
+        return;
+    };
+    const PORTS: &[(u16, &str)] = &[
+        (21, "suspicious_port_21"),
+        (23, "suspicious_port_23"),
+        (6667, "suspicious_port_6667"),
+        (445, "suspicious_port_445"),
+        (139, "suspicious_port_139"),
+        (137, "suspicious_port_137"),
+        (135, "suspicious_port_135"),
+        (3389, "suspicious_port_3389"),
+        (161, "suspicious_port_161"),
+        (389, "suspicious_port_389"),
+        (636, "suspicious_port_636"),
+        (3268, "suspicious_port_3268"),
+        (3269, "suspicious_port_3269"),
+        (111, "suspicious_port_111"),
+        (2049, "suspicious_port_2049"),
+        (1433, "suspicious_port_1433"),
+        (3306, "suspicious_port_3306"),
+        (5432, "suspicious_port_5432"),
+        (6379, "suspicious_port_6379"),
+        (27017, "suspicious_port_27017"),
+    ];
+    if src == 0 || dst == 0 {
+        counts.add("invalid_port_0");
+    }
+    for &(port, id) in PORTS {
+        if src == port || dst == port {
+            counts.add(id);
+        }
+    }
+    for &(id, port) in &[
+        ("ssdp_amp", 1900),
+        ("snmp_amp", 161),
+        ("mdns_amp", 5353),
+        ("memcached_amp", 11211),
+        ("chargen_abuse", 19),
+    ] {
+        if src == port {
+            counts.add(id);
+        }
+    }
+    if protocol == "UDP" && src == 389 {
+        counts.add("cldap_amp");
+    }
+    if src == 123 && dst != 123 {
+        counts.add("ntp_amp_src");
+    }
+    if dst == 123 && src <= 1023 && src != 123 {
+        counts.add("ntp_abuse_low_port");
+    }
+    if dst == 19 {
+        counts.add("chargen_dst_abuse");
+    }
+    for &(id, destinations) in &[
+        ("web_low_source", &[80, 443, 8080, 8443, 8000, 8008][..]),
+        ("ms_rpc_smb_low", &[135, 139, 445][..]),
+        ("netbios_low", &[137, 138][..]),
+        ("unix_nfs_low", &[111, 2049][..]),
+        ("remote_infra_low", &[22, 23, 3389, 21][..]),
+        ("reflection_vectors_low", &[1900, 5353, 389][..]),
+    ] {
+        if src > 0 && src <= 1023 && destinations.contains(&dst) {
+            counts.add(id);
+        }
+    }
+    if src <= 1023 && src != 53 && dst == 53 {
+        counts.add("dns_low_to_low");
+    }
+    let bounded = &payload[..payload.len().min(MAX_SIGNATURE_SCAN_BYTES)];
+    const SIGNATURES: &[(&str, &[&[u8]])] = &[
+        (
+            "sig-scanners",
+            &[b"sqlmap", b"nikto", b"masscan", b"nmap", b"brup"],
+        ),
+        (
+            "sig-webshells",
+            &[b"eval(", b"base64_decode(", b"system(", b"shell_exec("],
+        ),
+        ("sig-auth", &[b"authorization:"]),
+        ("sig-xss", &[b"alert(", b"script>"]),
+        ("sig-rce", &[b"/bin/sh", b"/bin/bash", b"cmd.exe"]),
+    ];
+    for &(id, needles) in SIGNATURES {
+        if needles
+            .iter()
+            .any(|needle| ascii_contains_ci(bounded, needle))
+        {
+            counts.add(id);
+        }
+    }
+}
+
+fn ascii_contains_ci(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|window| {
+        window
+            .iter()
+            .zip(needle)
+            .all(|(a, b)| a.to_ascii_lowercase() == b.to_ascii_lowercase())
     })
 }
 
@@ -278,25 +657,42 @@ fn analyze_packet(data: &[u8], linktype: i32, _externally_truncated: bool, a: &m
     a.dst_ips.insert(dst.into());
     *a.talkers.entry(src.into()).or_default() += 1;
     *a.destinations.entry(dst.into()).or_default() += 1;
-    match transport {
+    let (src_port, dst_port, protocol) = match transport {
         TransportHeader::Tcp(t) => {
             a.protocols.tcp += 1;
             *a.src_ports.entry(t.source_port).or_default() += 1;
             *a.dst_ports.entry(t.destination_port).or_default() += 1;
             a.parsed += 1;
+            (Some(t.source_port), Some(t.destination_port), "TCP")
         }
         TransportHeader::Udp(u) => {
             a.protocols.udp += 1;
             *a.src_ports.entry(u.source_port).or_default() += 1;
             *a.dst_ports.entry(u.destination_port).or_default() += 1;
             a.parsed += 1;
+            (Some(u.source_port), Some(u.destination_port), "UDP")
         }
         TransportHeader::Icmpv4(_) => {
             a.protocols.icmp += 1;
             a.parsed += 1;
+            (None, None, "ICMP")
         }
-        _ => a.unparsed += 1,
-    }
+        _ => {
+            a.unparsed += 1;
+            return;
+        }
+    };
+    let payload = match packet.payload {
+        etherparse::LaxPayloadSlice::Empty => &[][..],
+        etherparse::LaxPayloadSlice::Ether(p) => p.payload,
+        etherparse::LaxPayloadSlice::Ip(p) => p.payload,
+        etherparse::LaxPayloadSlice::Udp { payload, .. } => payload,
+        etherparse::LaxPayloadSlice::Tcp { payload, .. } => payload,
+        etherparse::LaxPayloadSlice::LinuxSll(p) => p.payload,
+        etherparse::LaxPayloadSlice::MacsecModified { payload, .. } => payload,
+        _ => &[],
+    };
+    evaluate_threats(&mut a.threats, src_port, dst_port, protocol, payload);
 }
 fn ports(mut m: HashMap<u16, u64>) -> Vec<PortMetric> {
     let mut v: Vec<_> = m
@@ -391,6 +787,64 @@ mod tests {
         let m = parse_capture(&p, b.len() as u64).unwrap();
         fs::remove_file(p).unwrap();
         assert_eq!(m.summary.unparsed_packets, 1);
+    }
+    #[test]
+    fn threat_heuristics_cover_ports_traffic_and_all_signatures_without_payload() {
+        let mut c = ThreatCounts::default();
+        evaluate_threats(
+            &mut c,
+            Some(21),
+            Some(40000),
+            "TCP",
+            b"SQLMAP eval( Authorization: secret alert( /bin/sh",
+        );
+        evaluate_threats(&mut c, Some(0), Some(53), "UDP", b"nmap");
+        evaluate_threats(&mut c, Some(1900), Some(50000), "UDP", b"nikto");
+        evaluate_threats(&mut c, Some(161), Some(50000), "UDP", b"masscan");
+        evaluate_threats(&mut c, Some(5353), Some(50000), "UDP", b"brup");
+        evaluate_threats(&mut c, Some(11211), Some(50000), "UDP", b"base64_decode(");
+        evaluate_threats(&mut c, Some(389), Some(50000), "UDP", b"script>");
+        evaluate_threats(&mut c, Some(123), Some(50000), "UDP", b"cmd.exe");
+        evaluate_threats(&mut c, Some(100), Some(80), "TCP", &[]);
+        evaluate_threats(&mut c, Some(100), Some(135), "TCP", &[]);
+        evaluate_threats(&mut c, Some(100), Some(137), "TCP", &[]);
+        evaluate_threats(&mut c, Some(100), Some(111), "TCP", &[]);
+        evaluate_threats(&mut c, Some(100), Some(22), "TCP", &[]);
+        evaluate_threats(&mut c, Some(100), Some(1900), "TCP", &[]);
+        evaluate_threats(&mut c, Some(100), Some(123), "TCP", &[]);
+        evaluate_threats(&mut c, Some(100), Some(19), "TCP", &[]);
+        let entries = c.entries();
+        for id in [
+            "suspicious_port_21",
+            "invalid_port_0",
+            "ssdp_amp",
+            "snmp_amp",
+            "mdns_amp",
+            "memcached_amp",
+            "cldap_amp",
+            "ntp_amp_src",
+            "ntp_abuse_low_port",
+            "chargen_dst_abuse",
+            "web_low_source",
+            "ms_rpc_smb_low",
+            "netbios_low",
+            "unix_nfs_low",
+            "remote_infra_low",
+            "reflection_vectors_low",
+            "dns_low_to_low",
+            "sig-scanners",
+            "sig-webshells",
+            "sig-auth",
+            "sig-xss",
+            "sig-rce",
+        ] {
+            assert!(
+                entries.iter().any(|entry| entry.rule_id == id),
+                "missing {id}"
+            );
+        }
+        let json = serde_json::to_string(&entries).unwrap();
+        assert!(!json.contains("SQLMAP") && !json.contains("secret"));
     }
     fn pcap_header(n: u32) -> Vec<u8> {
         let mut h = vec![
