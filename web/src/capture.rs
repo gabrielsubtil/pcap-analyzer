@@ -77,8 +77,11 @@ pub struct ProtocolSummary {
     pub destination_ports: Vec<PortMetric>,
     pub unique_source_ips: u64,
     pub unique_destination_ips: u64,
+    pub source_ip_values: Vec<String>,
+    pub destination_ip_values: Vec<String>,
     pub top_talkers: Vec<DistributionMetric>,
     pub top_destinations: Vec<DistributionMetric>,
+    pub packet_size_stats: HashMap<u64, u64>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct CaptureMetrics {
@@ -143,6 +146,7 @@ struct Acc {
     dst_ips: BTreeSet<Ipv4Addr>,
     talkers: HashMap<Ipv4Addr, u64>,
     destinations: HashMap<Ipv4Addr, u64>,
+    packet_sizes: HashMap<u64, u64>,
     threats: ThreatCounts,
     dns: HashMap<(String, String), u64>,
     dns_parsed: u64,
@@ -477,6 +481,7 @@ pub fn parse_capture(path: &Path, file_bytes: u64) -> Result<CaptureMetrics, Par
             captured_bytes = captured_bytes
                 .checked_add(caplen)
                 .ok_or(ParseError::LimitExceeded("captured_bytes"))?;
+            *acc.packet_sizes.entry(caplen).or_default() += 1;
             original_bytes = original_bytes
                 .checked_add(origlen)
                 .ok_or(ParseError::LimitExceeded("original_bytes"))?;
@@ -531,8 +536,11 @@ pub fn parse_capture(path: &Path, file_bytes: u64) -> Result<CaptureMetrics, Par
             destination_ports: ports(acc.dst_ports),
             unique_source_ips: acc.src_ips.len() as u64,
             unique_destination_ips: acc.dst_ips.len() as u64,
+            source_ip_values: acc.src_ips.iter().map(ToString::to_string).collect(),
+            destination_ip_values: acc.dst_ips.iter().map(ToString::to_string).collect(),
             top_talkers: ips(acc.talkers),
             top_destinations: ips(acc.destinations),
+            packet_size_stats: acc.packet_sizes,
         },
         threat_summary: acc.threats.entries(),
         dns: DnsSummary {
@@ -868,6 +876,7 @@ mod tests {
         fs::remove_file(p).unwrap();
         assert_eq!((m.format, m.packet_count, m.captured_bytes), ("pcap", 1, 4));
         assert_eq!(m.summary.unparsed_packets, 1);
+        assert_eq!(m.summary.packet_size_stats.get(&4), Some(&1));
     }
     #[test]
     fn synthetic_ethernet_protocols_are_summarized() {

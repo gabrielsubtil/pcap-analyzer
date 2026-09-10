@@ -47,20 +47,22 @@ const PYWEBVIEW_COMPAT: &str = r#"(() => {
     const summaries = metrics.map(metric => metric.summary || {});
     const top = key => Object.values(summaries.flatMap(summary => summary[key] || []).reduce((out, item) => {
       const name = item.value; out[name] = {...item, packets: sum(out[name]?.packets || 0, item.packets)}; return out;
-    }, {})).sort((a, b) => b.packets - a.packets || a.value.localeCompare(b.value)).slice(0, 10);
+    }, {})).map(item => [item.value, item.packets]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 10);
     const threats = Object.values(metrics.flatMap(metric => metric.threat_summary || []).reduce((out, item) => {
       out[item.rule_id] = {...item, count: sum(out[item.rule_id]?.count || 0, item.count)}; return out;
-    }, {})).sort((a, b) => b.count - a.count || a.rule_id.localeCompare(b.rule_id));
+    }, {})).sort((a, b) => b.count - a.count || a.rule_id.localeCompare(b.rule_id)).map(item => ({title: item.title, description: item.description, count: item.count}));
+    const sourceIps = new Set(summaries.flatMap(summary => summary.source_ip_values || []));
+    const destinationIps = new Set(summaries.flatMap(summary => summary.destination_ip_values || []));
     return {
       totalPackets: summaries.reduce((total, summary) => sum(total, summary.packet_count), 0),
       totalBytes: metrics.reduce((total, metric) => sum(total, metric.captured_bytes), 0),
-      uniqueSrcIpsCount: summaries.reduce((total, summary) => sum(total, summary.unique_source_ips), 0),
-      uniqueDstIpsCount: summaries.reduce((total, summary) => sum(total, summary.unique_destination_ips), 0),
+      uniqueSrcIpsCount: sourceIps.size,
+      uniqueDstIpsCount: destinationIps.size,
       topTalkers: top('top_talkers'), topDestinations: top('top_destinations'),
       protocolStats: summaries.reduce((out, summary) => { for (const [name, count] of Object.entries(summary.protocol_counts || {})) out[name] = sum(out[name] || 0, count); return out; }, {}),
       portStats: mergeCounts(summaries.flatMap(summary => summary.destination_ports || []), 'port'),
       srcPortStats: mergeCounts(summaries.flatMap(summary => summary.source_ports || []), 'port'),
-      packetSizeStats: {}, threatStats: threats
+      packetSizeStats: summaries.reduce((out, summary) => { for (const [size, count] of Object.entries(summary.packet_size_stats || {})) out[size] = sum(out[size] || 0, count); return out; }, {}), threatStats: threats
     };
   };
   const analyze = async () => {

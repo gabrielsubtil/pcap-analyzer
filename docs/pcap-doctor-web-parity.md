@@ -20,7 +20,9 @@ Context7, biblioteca `/tokio-rs/axum/axum_v0_7_9`, consultada em 2026-09-10: doc
 
 - `pick_files` mantém os `File` reais em um fechamento privado, preserva a ordem do `FileList`, limita a seleção aos primeiros 50 e devolve somente os nomes esperados pelo `app.js`.
 - `analyze_files` envia cada `File` selecionado, em ordem, como `file` no `POST /api/jobs` usando `FormData`; o browser define o boundary multipart.
-- Os jobs completos são agregados em camelCase para o Dashboard. Campos sem fonte no backend atual, como distribuição de tamanhos, permanecem vazios; não são sintetizados.
+- Jobs completos são agregados em camelCase para o Dashboard. `topTalkers` e `topDestinations` são pares `[ip, contagem]`, no formato consumido pelo Desktop; `threatStats` expõe somente `{title, description, count}`, derivados do catálogo Desktop.
+- A cardinalidade global de origem/destino em múltiplos arquivos é calculada pela união dos valores de IP emitidos por cada job, nunca pela soma dos contadores. Esses valores são limitados indiretamente a `MAX_PACKETS` por captura; a análise recusa capturas acima desse limite.
+- `packetSizeStats` é medido pelo tamanho capturado de cada pacote e agregado entre jobs; não é um campo sintético.
 - Jobs ou uploads com falha viram `Error` controlado e chegam ao tratamento de erro existente do Desktop.
 
 ## Superfícies ainda indisponíveis

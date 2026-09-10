@@ -107,6 +107,68 @@ async fn browser_bridge_maps_and_aggregates_backend_metrics_in_camel_case() {
 }
 
 #[tokio::test]
+async fn browser_bridge_emits_desktop_tuple_contract_for_ip_distributions() {
+    let script = text(
+        app_with_temp_dir(temp_dir())
+            .oneshot(
+                Request::get("/pywebview-compat.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(script.contains(".map(item => [item.value, item.packets])"));
+    assert!(script.contains(".sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))"));
+}
+
+#[tokio::test]
+async fn browser_bridge_emits_catalog_shaped_threat_stats() {
+    let script = text(
+        app_with_temp_dir(temp_dir())
+            .oneshot(
+                Request::get("/pywebview-compat.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        script.contains("({title: item.title, description: item.description, count: item.count})")
+    );
+}
+
+#[tokio::test]
+async fn browser_bridge_unions_per_file_ip_values_for_global_cardinality() {
+    let script = text(
+        app_with_temp_dir(temp_dir())
+            .oneshot(
+                Request::get("/pywebview-compat.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        script.contains("new Set(summaries.flatMap(summary => summary.source_ip_values || []))")
+    );
+    assert!(
+        script
+            .contains("new Set(summaries.flatMap(summary => summary.destination_ip_values || []))")
+    );
+    assert!(
+        !script
+            .contains("summaries.reduce((total, summary) => sum(total, summary.unique_source_ips)")
+    );
+    assert!(script.contains("summary.packet_size_stats"));
+}
+
+#[tokio::test]
 async fn browser_bridge_propagates_failed_job_as_controlled_error() {
     let script = text(
         app_with_temp_dir(temp_dir())
