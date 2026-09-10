@@ -24,8 +24,8 @@ async fn serves_desktop_frontend_artifacts_and_web_shell() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let html = String::from_utf8(body(response).await).unwrap();
-    assert!(html.contains("id=\"web-sidebar\""));
-    assert!(html.contains("aria-label=\"Navegação da análise\""));
+    assert!(!html.contains("web-sidebar"));
+    assert!(!html.contains("Navegação da análise"));
     assert!(html.contains("id=\"view-upload\""));
     assert!(html.contains("id=\"view-dashboard\""));
     assert!(html.contains("id=\"view-strings\""));
@@ -33,8 +33,8 @@ async fn serves_desktop_frontend_artifacts_and_web_shell() {
     assert!(html.contains("id=\"view-dns\""));
     assert!(html.contains("id=\"view-whois\""));
     assert!(html.contains("id=\"view-threats\""));
-    assert!(html.contains("/web-ui.css"));
-    assert!(html.contains("/web-ui.js"));
+    assert!(!html.contains("/web-ui.css"));
+    assert!(!html.contains("/web-ui.js"));
     let cases = [
         (
             "/styles.css",
@@ -81,9 +81,7 @@ async fn serves_frontend_assets_with_browser_content_types() {
     for (uri, expected) in [
         ("/", "text/html; charset=utf-8"),
         ("/styles.css", "text/css; charset=utf-8"),
-        ("/web-ui.css", "text/css; charset=utf-8"),
         ("/app.js", "text/javascript; charset=utf-8"),
-        ("/web-ui.js", "text/javascript; charset=utf-8"),
         ("/assets/logo.png", "image/png"),
     ] {
         let response = app()
@@ -102,7 +100,7 @@ async fn exposes_pywebview_compatibility_methods() {
         .unwrap();
     let response = app().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(body(response).await, br#""5.0""#);
+    assert_eq!(body(response).await, br#""5.2""#);
 }
 
 #[tokio::test]

@@ -18,18 +18,29 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use tokio::{fs, io::AsyncWriteExt, sync::Mutex, time::timeout};
+use tokio::{
+    fs,
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+    sync::Mutex,
+    time::timeout,
+};
 use uuid::Uuid;
 
 const DESKTOP_INDEX: &[u8] = include_bytes!("../../src/frontend/index.html");
 const DESKTOP_STYLES: &[u8] = include_bytes!("../../src/frontend/styles.css");
 const DESKTOP_APP: &[u8] = include_bytes!("../../src/frontend/app.js");
 const DESKTOP_LOGO: &[u8] = include_bytes!("../../src/frontend/assets/logo.png");
-const WEB_UI_CSS: &[u8] = include_bytes!("../ui.css");
-const WEB_UI_SCRIPT: &[u8] = include_bytes!("../ui.js");
 const DESKTOP_APP_SCRIPT_TAG: &str = "    <script src=\"app.js\"></script>";
-const WEB_APP_SCRIPT_TAGS: &str = "    <script src=\"/pywebview-compat.js\"></script>\n    <script src=\"app.js\"></script>\n    <script src=\"/web-ui.js\"></script>";
+const WEB_APP_SCRIPT_TAGS: &str =
+    "    <script src=\"/pywebview-compat.js\"></script>\n    <script src=\"app.js\"></script>";
 const PYWEBVIEW_COMPAT: &str = r#"(() => {
+  const browserFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const url = typeof input === 'string' ? input : input?.url;
+    if (url === 'http://ip-api.com/batch') input = '/api/whois';
+    return browserFetch(input, init);
+  };
   const call = (method, payload = {}) => fetch(`/api/pywebview/${method}`, {
     method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(payload)
   }).then(async response => {
@@ -152,14 +163,13 @@ pub fn app_with_state(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/styles.css", get(styles))
-        .route("/web-ui.css", get(web_ui_styles))
         .route("/app.js", get(app_script))
-        .route("/web-ui.js", get(web_ui_script))
         .route("/assets/logo.png", get(logo))
         .route("/pywebview-compat.js", get(pywebview_compat))
         .route("/api/health", get(health))
         .route("/api/threat-catalog", get(threat_catalog))
         .route("/api/pywebview/{method}", post(pywebview_api))
+        .route("/api/whois", post(whois))
         .route("/api/jobs", post(create_job))
         .route("/api/jobs/aggregate", post(create_aggregate_job))
         .route("/api/jobs/{job_id}", get(get_job))
@@ -175,24 +185,8 @@ fn static_asset(body: impl IntoResponse, content_type: &'static str) -> Response
     response
 }
 async fn index() -> Response {
-    let sidebar = r#"
-        <aside id="web-sidebar" aria-label="Navegação da análise">
-            <div class="sidebar-label">Navegação</div>
-            <nav>
-                <button type="button" data-view="dashboard" disabled>▦ <span>Dashboard</span></button>
-                <button type="button" data-view="strings" disabled>⌕ <span>Strings (ameaças)</span></button>
-                <button type="button" data-view="all-strings" disabled>≡ <span>Todas as strings</span></button>
-                <button type="button" data-view="dns" disabled>◎ <span>DNS</span></button>
-                <button type="button" data-view="whois" disabled>⌁ <span>Whois</span></button>
-                <button type="button" data-view="threats">✓ <span>Catálogo</span></button>
-            </nav>
-            <div class="sidebar-status"><strong id="web-analysis-status">Nenhuma análise carregada</strong>Upload-first · dados temporários</div>
-        </aside>
-    "#;
-    let html = String::from_utf8_lossy(DESKTOP_INDEX)
-        .replace("    <link rel=\"stylesheet\" href=\"styles.css\">", "    <link rel=\"stylesheet\" href=\"styles.css\">\n    <link rel=\"stylesheet\" href=\"/web-ui.css\">")
-        .replace("    <main class=\"max-w-7xl mx-auto px-4 py-8\">", &format!("{sidebar}\n    <main class=\"max-w-7xl mx-auto px-4 py-8\">"))
-        .replace(DESKTOP_APP_SCRIPT_TAG, WEB_APP_SCRIPT_TAGS);
+    let html =
+        String::from_utf8_lossy(DESKTOP_INDEX).replace(DESKTOP_APP_SCRIPT_TAG, WEB_APP_SCRIPT_TAGS);
     let mut response = html.into_response();
     response.headers_mut().insert(
         CONTENT_TYPE,
@@ -203,15 +197,11 @@ async fn index() -> Response {
 async fn styles() -> Response {
     static_asset(DESKTOP_STYLES, "text/css; charset=utf-8")
 }
-async fn web_ui_styles() -> Response {
-    static_asset(WEB_UI_CSS, "text/css; charset=utf-8")
-}
+
 async fn app_script() -> Response {
     static_asset(DESKTOP_APP, "text/javascript; charset=utf-8")
 }
-async fn web_ui_script() -> Response {
-    static_asset(WEB_UI_SCRIPT, "text/javascript; charset=utf-8")
-}
+
 async fn logo() -> Response {
     static_asset(DESKTOP_LOGO, "image/png")
 }
@@ -241,7 +231,7 @@ async fn pywebview_api(
             .map(|Json(response)| Json(response));
     }
     match method.as_str() {
-        "get_app_version" => Ok(Json(serde_json::json!("5.0"))),
+        "get_app_version" => Ok(Json(serde_json::json!("5.2"))),
         "get_catalog" => Ok(Json(serde_json::json!({
             "contract_version": "pcap-doctor.threat-catalog.v1",
             "rules": capture::catalog()
@@ -271,6 +261,115 @@ async fn health() -> Json<HealthResponse> {
         status: "ok",
         phase: "homologation",
     })
+}
+
+async fn whois(
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
+    let body = serde_json::to_vec(&payload).map_err(|_| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_json",
+            "payload Whois inválido",
+        )
+    })?;
+    let mut stream = timeout(Duration::from_secs(8), TcpStream::connect("ip-api.com:80"))
+        .await
+        .map_err(|_| {
+            api_error(
+                StatusCode::GATEWAY_TIMEOUT,
+                "whois_timeout",
+                "tempo limite na consulta Whois",
+            )
+        })?
+        .map_err(|_| {
+            api_error(
+                StatusCode::BAD_GATEWAY,
+                "whois_unavailable",
+                "serviço Whois indisponível",
+            )
+        })?;
+    let request = format!(
+        "POST /batch HTTP/1.1\r\nHost: ip-api.com\r\nUser-Agent: pcap-doctor-web/1.0\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).await.map_err(|_| {
+        api_error(
+            StatusCode::BAD_GATEWAY,
+            "whois_unavailable",
+            "serviço Whois indisponível",
+        )
+    })?;
+    stream.write_all(&body).await.map_err(|_| {
+        api_error(
+            StatusCode::BAD_GATEWAY,
+            "whois_unavailable",
+            "serviço Whois indisponível",
+        )
+    })?;
+    let mut response = Vec::new();
+    timeout(Duration::from_secs(8), stream.read_to_end(&mut response))
+        .await
+        .map_err(|_| {
+            api_error(
+                StatusCode::GATEWAY_TIMEOUT,
+                "whois_timeout",
+                "tempo limite na consulta Whois",
+            )
+        })?
+        .map_err(|_| {
+            api_error(
+                StatusCode::BAD_GATEWAY,
+                "whois_unavailable",
+                "serviço Whois indisponível",
+            )
+        })?;
+    let separator = response
+        .windows(4)
+        .position(|window| window == b"\\r\\n\\r\\n")
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::BAD_GATEWAY,
+                "whois_invalid_response",
+                "resposta Whois inválida",
+            )
+        })?;
+    if !(response.starts_with(b"HTTP/1.1 200") || response.starts_with(b"HTTP/1.0 200")) {
+        return Err(api_error(
+            StatusCode::BAD_GATEWAY,
+            "whois_unavailable",
+            "serviço Whois indisponível",
+        ));
+    }
+    let raw_body = &response[separator + 4..];
+    let start = raw_body
+        .iter()
+        .position(|byte| *byte == b'[')
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::BAD_GATEWAY,
+                "whois_invalid_response",
+                "resposta Whois inválida",
+            )
+        })?;
+    let end = raw_body
+        .iter()
+        .rposition(|byte| *byte == b']')
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::BAD_GATEWAY,
+                "whois_invalid_response",
+                "resposta Whois inválida",
+            )
+        })?;
+    let value = serde_json::from_slice(&raw_body[start..=end]).map_err(|_| {
+        api_error(
+            StatusCode::BAD_GATEWAY,
+            "whois_invalid_response",
+            "resposta Whois inválida",
+        )
+    })?;
+    Ok(Json(value))
 }
 
 #[derive(Serialize)]

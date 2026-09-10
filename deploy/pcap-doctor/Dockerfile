@@ -6,7 +6,6 @@ COPY web/src ./src
 # The Web shell embeds the authoritative Desktop frontend assets at compile time.
 COPY src/frontend /src/frontend
 COPY web/index.html ./index.html
-COPY web/ui.css web/ui.js ./
 RUN cargo build --release --locked
 
 FROM alpine:3.22
