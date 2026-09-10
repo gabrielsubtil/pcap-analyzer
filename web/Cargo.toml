@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 axum = { version = "0.8.4", features = ["multipart"] }
+etherparse = "0.21"
 futures-util = "0.3"
 pcap-parser = "0.17"
 serde = { version = "1", features = ["derive"] }
