@@ -177,3 +177,23 @@ async fn browser_bridge_propagates_failed_job_as_controlled_error() {
     assert!(script.contains("throw new Error"));
     assert_eq!(StatusCode::UNPROCESSABLE_ENTITY.as_u16(), 422);
 }
+
+#[tokio::test]
+async fn browser_bridge_keeps_aggregate_job_id_and_exposes_dns_arguments() {
+    let script = text(
+        app_with_temp_dir(temp_dir())
+            .oneshot(
+                Request::get("/pywebview-compat.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(script.contains("let analysisJobId = null"));
+    assert!(script.contains("analysisJobId = data.job_id"));
+    assert!(script.contains("get_dns_records: (limit, offset)"));
+    assert!(script.contains("job_id: analysisJobId"));
+    assert!(script.contains(".then(data => data.items)"));
+}

@@ -7,7 +7,8 @@ A rota web serve os quatro artefatos Desktop diretamente de `src/frontend/` com 
 - `GET /pywebview-compat.js` entrega o adaptador de compatibilidade para o browser.
 - O adaptador cria `window.pywebview.api`, usa um elemento `input[type=file]` para seleção e nunca expõe caminhos locais.
 - As chamadas do objeto são encaminhadas para `POST /api/pywebview/{method}`.
-- `get_app_version` e `get_catalog` têm respostas mínimas; métodos sem backend de paridade retornam `501` com `method_not_implemented`.
+- `get_app_version` e `get_catalog` têm respostas mínimas; `get_dns_records(limit, offset)` usa o `job_id` da última análise agregada e retorna somente `{transactionId, queryName, queryType, count}` paginados (limite 1–100).
+- Chamadas DNS antes da análise, para job expirado ou com paginação inválida retornam erro JSON controlado; DNS legado em `/api/jobs/{job_id}/dns` conserva `{name,qtype,count}`.
 - Os endpoints existentes `/api/health`, `/api/threat-catalog`, `/api/jobs` e `/api/jobs/{job_id}/dns` permanecem preservados.
 
 O HTML Desktop é servido literalmente, portanto o script compatível é uma rota separada e não foi injetado no `index.html`. Um host Web que precise da bridge deve carregar `/pywebview-compat.js` antes de `/app.js`; o `app.js` original continua carregando sem assumir a existência da bridge.
@@ -27,10 +28,15 @@ Context7, biblioteca `/tokio-rs/axum/axum_v0_7_9`, consultada em 2026-09-10: doc
 
 ## Superfícies ainda indisponíveis
 
-Strings (`get_string_filter_types`, `get_analysis_strings`, `get_all_strings`), Whois e demais consultas de enriquecimento continuam sem backend de paridade e retornam `501 method_not_implemented`. DNS permanece disponível somente pela API paginada existente; a jornada de análise agora cobre o Dashboard, não essas superfícies.
+Strings (`get_string_filter_types`, `get_analysis_strings`, `get_all_strings`), Whois e demais consultas de enriquecimento continuam sem backend de paridade e retornam `501 method_not_implemented`. DNS agora cobre a jornada de análise agregada pela bridge, mantendo o contrato legado de arquivo único.
 
 ## TDD registrado
 
-- RED: `cargo test --manifest-path web/Cargo.toml --locked --test bridge_contract` falhou em 4/4 contratos antes da implementação.
-- GREEN: o mesmo teste passou 4/4 após a implementação.
-- Suite completa: `cargo test --manifest-path web/Cargo.toml --locked` passou após a implementação.
+- RED: os contratos DNS novos falharam antes da implementação: bridge sem `job_id`, resposta camelCase/payload DNS e chamada sem análise.
+- GREEN: os mesmos contratos passaram após a implementação.
+- Suite completa: `cargo test --manifest-path web/Cargo.toml --locked` passou.
+- Release: `cargo build --manifest-path web/Cargo.toml --locked --release` passou.
+
+## Próximas superfícies
+
+Strings e Whois ainda retornam `501 method_not_implemented`; não fazem parte desta fatia DNS.

@@ -38,6 +38,7 @@ const PYWEBVIEW_COMPAT: &str = r#"(() => {
   });
   const input = document.createElement('input'); input.type = 'file'; input.multiple = true;
   let selectedFiles = [];
+  let analysisJobId = null;
   const analyze = async () => {
     if (!selectedFiles.length) throw new Error('Nenhum arquivo selecionado.');
     const form = new FormData();
@@ -45,6 +46,7 @@ const PYWEBVIEW_COMPAT: &str = r#"(() => {
     const response = await fetch('/api/jobs/aggregate', {method: 'POST', body: form});
     const data = await response.json();
     if (!response.ok || data.status === 'failed') throw new Error(data?.error?.message || data?.message || 'Falha no job de análise.');
+    analysisJobId = data.job_id;
     const summary = data.metrics?.summary || {};
     return {
       totalPackets: summary.packet_count || 0, totalBytes: data.metrics?.captured_bytes || 0,
@@ -65,7 +67,11 @@ const PYWEBVIEW_COMPAT: &str = r#"(() => {
     analyze_files: () => analyze(),
     get_string_filter_types: () => call('get_string_filter_types'),
     get_analysis_strings: args => call('get_analysis_strings', { args }),
-    get_dns_records: args => call('get_dns_records', { args }),
+    get_dns_records: (limit, offset) => {
+      if (!analysisJobId) return Promise.reject(new Error('Nenhuma análise concluída.'));
+      return call('get_dns_records', { args: [limit, offset], job_id: analysisJobId })
+        .then(data => data.items);
+    },
     get_all_strings: args => call('get_all_strings', { args })
   }};
   window.dispatchEvent(new Event('pywebviewready'));
@@ -88,6 +94,7 @@ struct Job {
     expires_at: SystemTime,
     result: JobResult,
     dns: Vec<capture::DnsEntry>,
+    dns_records: Vec<capture::DnsParityEntry>,
 }
 
 #[derive(Clone, Serialize)]
@@ -176,9 +183,15 @@ async fn pywebview_compat() -> Response {
 }
 
 async fn pywebview_api(
+    State(state): State<AppState>,
     Path(method): Path<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiErrorResponse>)> {
+    if method == "get_dns_records" {
+        return get_dns_records_for_bridge(State(state), Json(payload))
+            .await
+            .map(|Json(response)| Json(serde_json::to_value(response).unwrap()));
+    }
     match method.as_str() {
         "get_app_version" => Ok(Json(serde_json::json!("5.0"))),
         "get_catalog" => Ok(Json(serde_json::json!({
@@ -290,7 +303,7 @@ async fn create_job(
     let dns = result
         .metrics
         .as_ref()
-        .map(|m| m.dns_entries.clone())
+        .map(|m| capture::legacy_dns_entries(&m.dns_records))
         .unwrap_or_default();
     state.jobs.lock().await.insert(
         job_id,
@@ -298,6 +311,7 @@ async fn create_job(
             expires_at: SystemTime::now() + JOB_TTL,
             result: result.clone(),
             dns,
+            dns_records: Vec::new(),
         },
     );
     Ok((status, Json(result)))
@@ -316,6 +330,15 @@ struct DnsResponse {
     offset: u64,
     total: u64,
     items: Vec<capture::DnsEntry>,
+}
+#[derive(Serialize)]
+struct DnsParityResponse {
+    contract_version: &'static str,
+    job_id: String,
+    limit: u64,
+    offset: u64,
+    total: u64,
+    items: Vec<capture::DnsParityEntry>,
 }
 async fn create_aggregate_job(
     State(state): State<AppState>,
@@ -442,7 +465,8 @@ async fn create_aggregate_job(
             "falha ao agregar capturas",
         ))
     })?;
-    let dns = metrics.dns_entries.clone();
+    let dns_records = metrics.dns_records.clone();
+    let dns = capture::legacy_dns_entries(&dns_records);
     let result = JobResult {
         contract_version: "pcap-doctor.job-result.v1",
         job_id: job_id.clone(),
@@ -461,6 +485,7 @@ async fn create_aggregate_job(
             expires_at: SystemTime::now() + JOB_TTL,
             result: result.clone(),
             dns,
+            dns_records,
         },
     );
     Ok((StatusCode::CREATED, Json(result)))
@@ -512,6 +537,88 @@ async fn get_dns(
         offset,
         total,
         items: job.dns[start..end].to_vec(),
+    }))
+}
+
+async fn get_dns_records_for_bridge(
+    State(state): State<AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<DnsParityResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let job_id = payload
+        .get("job_id")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::CONFLICT,
+                "analysis_required",
+                "nenhuma análise agregada concluída",
+            )
+        })?;
+    let args = payload
+        .get("args")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_pagination",
+                "argumentos de paginação inválidos",
+            )
+        })?;
+    let limit = args
+        .first()
+        .and_then(|value| value.as_u64())
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_pagination",
+                "limit deve ser um inteiro",
+            )
+        })?;
+    let offset = args
+        .get(1)
+        .and_then(|value| value.as_u64())
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_pagination",
+                "offset deve ser um inteiro",
+            )
+        })?;
+    if !(1..=100).contains(&limit) {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_pagination",
+            "limit deve estar entre 1 e 100",
+        ));
+    }
+    cleanup_expired(&state).await;
+    let jobs = state.jobs.lock().await;
+    let job = jobs.get(job_id).ok_or_else(|| {
+        api_error(
+            StatusCode::NOT_FOUND,
+            "job_not_found",
+            "job não encontrado ou expirado",
+        )
+    })?;
+    let total = job.dns_records.len() as u64;
+    if offset > total {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_pagination",
+            "offset excede o total de itens",
+        ));
+    }
+    let start = offset as usize;
+    let end = start
+        .saturating_add(limit as usize)
+        .min(job.dns_records.len());
+    Ok(Json(DnsParityResponse {
+        contract_version: "pcap-doctor.dns-page.v2",
+        job_id: job_id.to_owned(),
+        limit,
+        offset,
+        total,
+        items: job.dns_records[start..end].to_vec(),
     }))
 }
 

@@ -39,7 +39,7 @@ O **PCAP Analyzer** elimina a necessidade de ferramentas complexas como Wireshar
 - **Análise de Ameaças**: Detecção baseada em assinaturas fixas limitadas e comportamento de tráfego. O Web retorna somente contagens agregadas.
 - **Resumo heurístico Web**: portas suspeitas, porta 0, vetores de amplificação/reflexão e regras low-to-low do Desktop; heurísticas não provam comprometimento.
 - **Catálogo Web**: `GET /api/threat-catalog` descreve cada regra em PT-BR.
-- **DNS Web limitado**: o resultado inclui apenas metadados `pcap-doctor.dns.v1`; as consultas agregadas ficam em `GET /api/jobs/{id}/dns?limit=&offset=` (`limit` 1–100, padrão 25). Cada item é `{name,qtype,count}` e o total de cardinalidade é limitado a 10.000 chaves.
+- **DNS Web limitado**: o resultado agregado inclui apenas metadados `pcap-doctor.dns.v1`; a bridge Desktop guarda somente o `job_id` e consulta `POST /api/pywebview/get_dns_records` com paginação explícita (limite 1–100). Cada item da bridge é `{transactionId,queryName,queryType,count}`, sem payload. O endpoint legado `GET /api/jobs/{id}/dns` permanece `{name,qtype,count}`.
 - **Contrato DNS**: são analisadas consultas UDP IPv4 com QNAME sem compressão; A/AAAA têm rótulos próprios e outros tipos usam `TYPE<n>`. Consultas malformadas, truncadas e comprimidas são contadas sem retornar conteúdo. DNS sobre TCP é explicitamente contado como não suportado; o framing de 2 bytes de DNS/TCP ainda não é interpretado.
 - **Privacidade/TTL**: DNS é agregado somente em memória e expira junto com o job após 15 minutos; não há volume, banco ou log de conteúdo de captura.
 - **Dashboard Rico**: Visualização clara de volumes, protocolos e top talkers.

@@ -261,3 +261,90 @@ async fn aggregate_job_rejects_more_than_fifty_files() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
+
+#[tokio::test]
+async fn aggregate_dns_returns_desktop_camel_case_items_without_payloads() {
+    use etherparse::PacketBuilder;
+    let mut frame = Vec::new();
+    let mut dns = vec![0x12, 0x34, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 7];
+    dns.extend_from_slice(b"example");
+    dns.extend_from_slice(&[3]);
+    dns.extend_from_slice(b"com");
+    dns.extend_from_slice(&[0, 0, 1, 0, 1]);
+    PacketBuilder::ethernet2([0, 1, 2, 3, 4, 5], [6, 7, 8, 9, 10, 11])
+        .ipv4([10, 0, 0, 1], [10, 0, 0, 2], 20)
+        .udp(40000, 53)
+        .write(&mut frame, &dns)
+        .unwrap();
+    let n = frame.len() as u32;
+    let mut capture = vec![
+        0xd4, 0xc3, 0xb2, 0xa1, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0,
+    ];
+    capture.extend_from_slice(&[1, 0, 0, 0]);
+    capture.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
+    capture.extend_from_slice(&n.to_le_bytes());
+    capture.extend_from_slice(&n.to_le_bytes());
+    capture.extend_from_slice(&frame);
+
+    let service = app_with_temp_dir(temp_dir("aggregate-dns"));
+    let response = service
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/jobs/aggregate")
+                .header(
+                    "content-type",
+                    "multipart/form-data; boundary=dns-aggregate",
+                )
+                .body(multipart(&capture, "dns-aggregate"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let response_json = json_body(response).await;
+    let id = response_json["job_id"].as_str().unwrap();
+    let page = service
+        .oneshot(
+            Request::post("/api/pywebview/get_dns_records")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(r#"{{"job_id":"{id}","args":[1,0]}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page_json = json_body(page).await;
+    let item = &page_json["items"][0];
+    assert_eq!(item["transactionId"], 0x1234);
+    assert_eq!(item["queryName"], "example.com");
+    assert_eq!(item["queryType"], "A");
+    assert_eq!(item["count"], 1);
+    assert!(item.get("payload").is_none());
+    assert!(item.get("name").is_none());
+}
+
+#[tokio::test]
+async fn bridge_dns_rejects_missing_analysis() {
+    let response = app_with_temp_dir(temp_dir("bridge-dns-errors"))
+        .oneshot(
+            Request::post("/api/pywebview/get_dns_records")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"args":[50,0]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let invalid_limit = app_with_temp_dir(temp_dir("bridge-dns-limit"))
+        .oneshot(
+            Request::post("/api/pywebview/get_dns_records")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"job_id":"missing","args":[101,0]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_limit.status(), StatusCode::BAD_REQUEST);
+}

@@ -99,7 +99,7 @@ pub struct CaptureMetrics {
     pub threat_summary: Vec<ThreatSummaryEntry>,
     pub dns: DnsSummary,
     #[serde(skip)]
-    pub(crate) dns_entries: Vec<DnsEntry>,
+    pub(crate) dns_records: Vec<DnsParityEntry>,
     #[serde(skip)]
     pub(crate) aggregate: AggregateState,
 }
@@ -119,6 +119,16 @@ pub struct DnsSummary {
 pub struct DnsEntry {
     pub name: String,
     pub qtype: String,
+    pub count: u64,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct DnsParityEntry {
+    #[serde(rename = "transactionId")]
+    pub transaction_id: u16,
+    #[serde(rename = "queryName")]
+    pub query_name: String,
+    #[serde(rename = "queryType")]
+    pub query_type: String,
     pub count: u64,
 }
 #[derive(Debug, Clone, Serialize)]
@@ -145,7 +155,7 @@ pub(crate) struct AggregateState {
     pub(crate) packet_sizes: HashMap<u64, u64>,
     pub(crate) protocols: ProtocolCounts,
     threats: ThreatCounts,
-    pub(crate) dns: HashMap<(String, String), u64>,
+    pub(crate) dns: HashMap<(u16, String, String), u64>,
     pub(crate) parsed: u64,
     pub(crate) unparsed: u64,
     pub(crate) truncated: u64,
@@ -170,7 +180,7 @@ struct Acc {
     destinations: HashMap<Ipv4Addr, u64>,
     packet_sizes: HashMap<u64, u64>,
     threats: ThreatCounts,
-    dns: HashMap<(String, String), u64>,
+    dns: HashMap<(u16, String, String), u64>,
     dns_parsed: u64,
     dns_malformed: u64,
     dns_truncated: u64,
@@ -594,7 +604,7 @@ pub fn parse_capture(path: &Path, file_bytes: u64) -> Result<CaptureMetrics, Par
             tcp_unsupported_packets: acc.dns_tcp,
             cardinality_capped: acc.dns.len() >= MAX_DNS_ENTRIES,
         },
-        dns_entries: dns_entries(acc.dns),
+        dns_records: dns_records(acc.dns),
         aggregate,
     })
 }
@@ -646,7 +656,7 @@ pub fn aggregate_captures(captures: Vec<CaptureMetrics>) -> Result<CaptureMetric
         tcp_unsupported_packets: a.dns_tcp,
         cardinality_capped: a.dns.len() >= MAX_DNS_ENTRIES,
     };
-    result.dns_entries = dns_entries(a.dns.clone());
+    result.dns_records = dns_records(a.dns.clone());
     Ok(result)
 }
 
@@ -876,12 +886,17 @@ fn analyze_packet(data: &[u8], linktype: i32, externally_truncated: bool, a: &mu
             a.dns_truncated += 1;
         }
         match parse_dns_query(if externally_truncated { &[] } else { payload }) {
-            DnsParseOutcome::Query { name, qtype } => {
+            DnsParseOutcome::Query {
+                transaction_id,
+                name,
+                qtype,
+            } => {
                 a.dns_parsed += 1;
-                if a.dns.contains_key(&(name.clone(), qtype.clone()))
+                if a.dns
+                    .contains_key(&(transaction_id, name.clone(), qtype.clone()))
                     || a.dns.len() < MAX_DNS_ENTRIES
                 {
-                    *a.dns.entry((name, qtype)).or_default() += 1;
+                    *a.dns.entry((transaction_id, name, qtype)).or_default() += 1;
                 }
             }
             DnsParseOutcome::Compressed => a.dns_compressed += 1,
@@ -892,7 +907,11 @@ fn analyze_packet(data: &[u8], linktype: i32, externally_truncated: bool, a: &mu
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DnsParseOutcome {
-    Query { name: String, qtype: String },
+    Query {
+        transaction_id: u16,
+        name: String,
+        qtype: String,
+    },
     Compressed,
     Malformed,
 }
@@ -947,23 +966,42 @@ fn parse_dns_query(data: &[u8]) -> DnsParseOutcome {
         n => format!("TYPE{n}"),
     };
     DnsParseOutcome::Query {
+        transaction_id: u16::from_be_bytes([data[0], data[1]]),
         name: labels.join("."),
         qtype,
     }
 }
 
-fn dns_entries(m: HashMap<(String, String), u64>) -> Vec<DnsEntry> {
+fn dns_records(m: HashMap<(u16, String, String), u64>) -> Vec<DnsParityEntry> {
     let mut entries: Vec<_> = m
         .into_iter()
-        .map(|((name, qtype), count)| DnsEntry { name, qtype, count })
+        .map(
+            |((transaction_id, query_name, query_type), count)| DnsParityEntry {
+                transaction_id,
+                query_name,
+                query_type,
+                count,
+            },
+        )
         .collect();
     entries.sort_by(|a, b| {
         b.count
             .cmp(&a.count)
-            .then(a.name.cmp(&b.name))
-            .then(a.qtype.cmp(&b.qtype))
+            .then(a.query_name.cmp(&b.query_name))
+            .then(a.query_type.cmp(&b.query_type))
+            .then(a.transaction_id.cmp(&b.transaction_id))
     });
     entries
+}
+pub(crate) fn legacy_dns_entries(records: &[DnsParityEntry]) -> Vec<DnsEntry> {
+    records
+        .iter()
+        .map(|record| DnsEntry {
+            name: record.query_name.clone(),
+            qtype: record.query_type.clone(),
+            count: record.count,
+        })
+        .collect()
 }
 fn ports(mut m: HashMap<u16, u64>) -> Vec<PortMetric> {
     let mut v: Vec<_> = m
@@ -1132,6 +1170,7 @@ mod tests {
         assert_eq!(
             parse_dns_query(&a),
             DnsParseOutcome::Query {
+                transaction_id: 1,
                 name: "example.com".into(),
                 qtype: "A".into()
             }
@@ -1139,6 +1178,7 @@ mod tests {
         assert_eq!(
             parse_dns_query(&aaaa),
             DnsParseOutcome::Query {
+                transaction_id: 1,
                 name: "example.com".into(),
                 qtype: "AAAA".into()
             }
