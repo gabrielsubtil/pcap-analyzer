@@ -62,7 +62,9 @@ const PYWEBVIEW_COMPAT: &str = r#"(() => {
   };
   window.pywebview = { api: {
     get_app_version: () => call('get_app_version'),
-    get_catalog: () => call('get_catalog').then(data => data.rules || data),
+    get_catalog: () => call('get_catalog').then(data => (data.rules || data).map(item => ({
+      id: item.rule_id, title: item.title, comment: item.description, explanation: item.description
+    }))),
     pick_files: () => new Promise(resolve => { input.value = ''; input.onchange = () => { selectedFiles = Array.from(input.files || []).slice(0, 50); resolve(selectedFiles.map(file => file.name)); }; input.click(); }),
     analyze_files: () => analyze(),
     get_string_filter_types: () => {
@@ -83,7 +85,9 @@ const PYWEBVIEW_COMPAT: &str = r#"(() => {
       return call('get_all_strings', { args: [limit, offset], job_id: analysisJobId }).then(data => data.items);
     }
   }};
-  window.dispatchEvent(new Event('pywebviewready'));
+  document.addEventListener('DOMContentLoaded', () => {
+    window.dispatchEvent(new Event('pywebviewready'));
+  }, {once: true});
 })();
 "#;
 

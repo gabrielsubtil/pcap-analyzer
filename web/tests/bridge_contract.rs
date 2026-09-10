@@ -141,6 +141,24 @@ async fn browser_bridge_emits_catalog_shaped_threat_stats() {
 }
 
 #[tokio::test]
+async fn browser_bridge_maps_catalog_fields_for_desktop_renderer() {
+    let script = text(
+        app_with_temp_dir(temp_dir())
+            .oneshot(
+                Request::get("/pywebview-compat.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(script.contains("id: item.rule_id"));
+    assert!(script.contains("comment: item.description"));
+    assert!(script.contains("explanation: item.description"));
+}
+
+#[tokio::test]
 async fn browser_bridge_unions_per_file_ip_values_for_global_cardinality() {
     let script = text(
         app_with_temp_dir(temp_dir())
@@ -196,4 +214,41 @@ async fn browser_bridge_keeps_aggregate_job_id_and_exposes_dns_arguments() {
     assert!(script.contains("get_dns_records: (limit, offset)"));
     assert!(script.contains("job_id: analysisJobId"));
     assert!(script.contains(".then(data => data.items)"));
+}
+
+#[tokio::test]
+async fn browser_bridge_defines_api_before_app_and_delivers_ready_after_app_can_listen() {
+    let bridge = text(
+        app_with_temp_dir(temp_dir())
+            .oneshot(
+                Request::get("/pywebview-compat.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    let html = text(
+        app_with_temp_dir(temp_dir())
+            .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    assert!(
+        html.find("/pywebview-compat.js").unwrap() < html.find("app.js").unwrap(),
+        "bridge must load before app.js"
+    );
+    let api = bridge.find("window.pywebview =").unwrap();
+    let ready = bridge
+        .find("dispatchEvent(new Event('pywebviewready'))")
+        .unwrap();
+    assert!(api < ready, "bridge must define API before ready event");
+    assert!(
+        bridge.contains("document.addEventListener('DOMContentLoaded'")
+            && bridge.contains("{once: true}"),
+        "ready event must be delivered after app.js has had a chance to listen"
+    );
 }
