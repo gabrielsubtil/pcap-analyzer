@@ -31,13 +31,55 @@ const WEB_APP_SCRIPT_TAGS: &str =
 const PYWEBVIEW_COMPAT: &str = r#"(() => {
   const call = (method, payload = {}) => fetch(`/api/pywebview/${method}`, {
     method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(payload)
-  }).then(async response => { const data = await response.json(); if (!response.ok) throw data; return data; });
+  }).then(async response => {
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error?.message || data?.message || `Falha em ${method}`);
+    return data;
+  });
   const input = document.createElement('input'); input.type = 'file'; input.multiple = true;
+  let selectedFiles = [];
+  const sum = (a, b) => a + (Number(b) || 0);
+  const mergeCounts = (items, key) => items.reduce((out, item) => {
+    const name = String(item[key]); out[name] = sum(out[name] || 0, item.packets); return out;
+  }, {});
+  const aggregate = results => {
+    const metrics = results.map(result => result.metrics).filter(Boolean);
+    const summaries = metrics.map(metric => metric.summary || {});
+    const top = key => Object.values(summaries.flatMap(summary => summary[key] || []).reduce((out, item) => {
+      const name = item.value; out[name] = {...item, packets: sum(out[name]?.packets || 0, item.packets)}; return out;
+    }, {})).sort((a, b) => b.packets - a.packets || a.value.localeCompare(b.value)).slice(0, 10);
+    const threats = Object.values(metrics.flatMap(metric => metric.threat_summary || []).reduce((out, item) => {
+      out[item.rule_id] = {...item, count: sum(out[item.rule_id]?.count || 0, item.count)}; return out;
+    }, {})).sort((a, b) => b.count - a.count || a.rule_id.localeCompare(b.rule_id));
+    return {
+      totalPackets: summaries.reduce((total, summary) => sum(total, summary.packet_count), 0),
+      totalBytes: metrics.reduce((total, metric) => sum(total, metric.captured_bytes), 0),
+      uniqueSrcIpsCount: summaries.reduce((total, summary) => sum(total, summary.unique_source_ips), 0),
+      uniqueDstIpsCount: summaries.reduce((total, summary) => sum(total, summary.unique_destination_ips), 0),
+      topTalkers: top('top_talkers'), topDestinations: top('top_destinations'),
+      protocolStats: summaries.reduce((out, summary) => { for (const [name, count] of Object.entries(summary.protocol_counts || {})) out[name] = sum(out[name] || 0, count); return out; }, {}),
+      portStats: mergeCounts(summaries.flatMap(summary => summary.destination_ports || []), 'port'),
+      srcPortStats: mergeCounts(summaries.flatMap(summary => summary.source_ports || []), 'port'),
+      packetSizeStats: {}, threatStats: threats
+    };
+  };
+  const analyze = async () => {
+    if (!selectedFiles.length) throw new Error('Nenhum arquivo selecionado.');
+    const results = [];
+    for (const file of selectedFiles) {
+      const form = new FormData(); form.append('file', file, file.name);
+      const response = await fetch('/api/jobs', {method: 'POST', body: form});
+      const data = await response.json();
+      if (!response.ok || data.status === 'failed') throw new Error(data?.error?.message || data?.message || 'Falha no job de análise.');
+      results.push(data);
+    }
+    return aggregate(results);
+  };
   window.pywebview = { api: {
     get_app_version: () => call('get_app_version'),
     get_catalog: () => call('get_catalog').then(data => data.rules || data),
-    pick_files: () => new Promise(resolve => { input.onchange = () => resolve(Array.from(input.files || []).map(file => file.name)); input.click(); }),
-    analyze_files: files => call('analyze_files', { files }),
+    pick_files: () => new Promise(resolve => { input.value = ''; input.onchange = () => { selectedFiles = Array.from(input.files || []).slice(0, 50); resolve(selectedFiles.map(file => file.name)); }; input.click(); }),
+    analyze_files: () => analyze(),
     get_string_filter_types: () => call('get_string_filter_types'),
     get_analysis_strings: args => call('get_analysis_strings', { args }),
     get_dns_records: args => call('get_dns_records', { args }),

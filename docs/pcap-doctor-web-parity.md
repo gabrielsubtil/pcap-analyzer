@@ -16,8 +16,19 @@ O HTML Desktop é servido literalmente, portanto o script compatível é uma rot
 
 Context7, biblioteca `/tokio-rs/axum/axum_v0_7_9`, consultada em 2026-09-10: documentação de `Html`/headers, serviços de arquivo/rotas e testes `Router::oneshot` com `tower::ServiceExt`.
 
+## Jornada Desktop no browser
+
+- `pick_files` mantém os `File` reais em um fechamento privado, preserva a ordem do `FileList`, limita a seleção aos primeiros 50 e devolve somente os nomes esperados pelo `app.js`.
+- `analyze_files` envia cada `File` selecionado, em ordem, como `file` no `POST /api/jobs` usando `FormData`; o browser define o boundary multipart.
+- Os jobs completos são agregados em camelCase para o Dashboard. Campos sem fonte no backend atual, como distribuição de tamanhos, permanecem vazios; não são sintetizados.
+- Jobs ou uploads com falha viram `Error` controlado e chegam ao tratamento de erro existente do Desktop.
+
+## Superfícies ainda indisponíveis
+
+Strings (`get_string_filter_types`, `get_analysis_strings`, `get_all_strings`), Whois e demais consultas de enriquecimento continuam sem backend de paridade e retornam `501 method_not_implemented`. DNS permanece disponível somente pela API paginada existente; a jornada de análise agora cobre o Dashboard, não essas superfícies.
+
 ## TDD registrado
 
-- RED: `cargo test --manifest-path web/Cargo.toml --locked --test parity_contract` falhou com 5/5 testes antes da implementação (rotas de artefatos e bridge retornavam 404 e a página ainda era inline).
-- GREEN: o mesmo teste passou 5/5 após a implementação.
-- Suite completa: `cargo test --manifest-path web/Cargo.toml --locked` passou 15 testes de integração/unidade, mais doctests sem testes.
+- RED: `cargo test --manifest-path web/Cargo.toml --locked --test bridge_contract` falhou em 4/4 contratos antes da implementação.
+- GREEN: o mesmo teste passou 4/4 após a implementação.
+- Suite completa: `cargo test --manifest-path web/Cargo.toml --locked` passou após a implementação.
