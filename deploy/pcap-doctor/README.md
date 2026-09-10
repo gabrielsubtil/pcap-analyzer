@@ -18,15 +18,50 @@ Edição Web/Docker do PCAP Doctor. O fluxo upload-first recebe PCAP/PCAPNG, gra
 - Rede Docker externa `proxy`
 - Caddy com `http://pcapdoctor.local { reverse_proxy pcap-doctor-web:8080 }`
 
-## Subir
+## Artefato imutável no GHCR
+
+O workflow `.github/workflows/pcap-doctor-web-image.yml` executa `cargo fmt --check` e `cargo test --locked` antes de publicar. A imagem é construída pelo GitHub Actions para **linux/arm64** e recebe somente a tag imutável `sha-<commit>`; o digest retornado pelo build é verificado com `buildx imagetools inspect` e aparece no resumo da execução. O workflow também publica uma atestação de proveniência.
+
+Imagem esperada (substitua `<commit>` e `<digest>` pelos valores da execução):
+
+```text
+ghcr.io/gabrielsubtil/pcap-analyzer:sha-<commit>@sha256:<digest>
+```
+
+Use sempre a referência por digest no Radxa. A tag `sha-<commit>` é apenas uma conveniência para localizar o artefato; `@sha256:...` é a parte que fixa exatamente os bytes consumidos.
+
+### Pré-requisitos do GHCR
+
+- O primeiro push precisa ser autorizado pelo `GITHUB_TOKEN` do workflow (`contents: read`, `packages: write`).
+- Em **Package settings**, associe o pacote ao repositório e defina a visibilidade desejada. Para pacote privado, o usuário que fará o pull precisa de um PAT classic com `read:packages` (e acesso ao repositório); para pacote público, o pull pode ser anônimo.
+- Não publique token, digest ou credencial no repositório. O token usado no Radxa deve ser fornecido interativamente ou por mecanismo de segredo já aprovado.
+
+### Pull e subida homologada
+
+Após uma execução bem-sucedida, copie a referência digestada exibida no resumo do workflow e execute no host ARM64:
+
+```bash
+cd /opt/pcap-doctor
+export PCAP_DOCTOR_IMAGE='ghcr.io/gabrielsubtil/pcap-analyzer@sha256:<digest>'
+# Para pacote privado, autentique antes com um PAT que tenha read:packages:
+# echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+docker compose pull pcap-doctor-web
+docker compose up -d --no-build
+docker compose ps
+docker image inspect "$PCAP_DOCTOR_IMAGE" --format '{{.RepoDigests}}'
+```
+
+Confira no output que o digest esperado está presente. `docker compose up -d --no-build` impede qualquer compilação local; não use `--build` nesse fluxo. O serviço não publica portas. O acesso LAN é via `http://pcapdoctor.local`.
+
+## Subir localmente
+
+Para desenvolvimento local, sem o artefato GHCR:
 
 ```bash
 cd /opt/pcap-doctor
 docker compose up -d --build
 docker compose ps
 ```
-
-O serviço não publica portas. O acesso LAN é via `http://pcapdoctor.local`.
 
 ## Segurança aplicada
 

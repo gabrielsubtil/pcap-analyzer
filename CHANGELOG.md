@@ -8,6 +8,11 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ### Não lançado — Web PCAP Doctor
 
+#### CI/CD e distribuição
+
+- **Imagem ARM64 reproduzível:** workflow GitHub Actions `.github/workflows/pcap-doctor-web-image.yml` valida `cargo fmt --check` e `cargo test --locked`, constrói/publica no GHCR apenas após os testes, fixa a tag por commit (`sha-<commit>`), verifica o digest e a plataforma `linux/arm64` e gera atestação de proveniência.
+- **Deploy por digest:** Compose e documentação aceitam `PCAP_DOCTOR_IMAGE` para puxar a imagem GHCR por `sha256` imutável, sem compilação no Radxa; incluídos os requisitos de visibilidade/permissão do pacote.
+
 #### Adicionado
 
 - **DNS Web limitado:** consultas UDP IPv4 sem compressão são agregadas por nome/tipo em memória e expostas por `GET /api/jobs/{id}/dns?limit=&offset=` (`pcap-doctor.dns-page.v1`), com limite de 100 itens por página e 10.000 chaves.

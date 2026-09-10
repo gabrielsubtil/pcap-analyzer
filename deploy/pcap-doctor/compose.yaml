@@ -5,7 +5,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/pcap-doctor/Dockerfile
-    image: pcap-doctor-web:homologation
+    image: ${PCAP_DOCTOR_IMAGE:-pcap-doctor-web:homologation}
     restart: unless-stopped
     read_only: true
     user: "10001:10001"
