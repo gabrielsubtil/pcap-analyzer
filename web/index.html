@@ -3,8 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>PCAP Doctor — Homologação</title>
-  <style>body{font-family:system-ui,sans-serif;background:#09111d;color:#e6edf7;display:grid;place-items:center;min-height:100vh;margin:0}main{max-width:42rem;padding:2rem;border:1px solid #2b4e74;border-radius:1rem;background:#101c2b}h1{margin-top:0;color:#6bc7ff}p{line-height:1.55}.tag{display:inline-block;background:#173b5a;padding:.3rem .6rem;border-radius:99px}</style>
+  <title>PCAP Doctor — análise de captura</title>
+  <style>
+    :root{color-scheme:dark;font-family:system-ui,sans-serif}body{background:#09111d;color:#e6edf7;display:grid;place-items:center;min-height:100vh;margin:0}main{width:min(42rem,calc(100% - 2rem));padding:2rem;border:1px solid #2b4e74;border-radius:1rem;background:#101c2b}h1{color:#6bc7ff}p{line-height:1.55}.drop{display:block;padding:2rem;border:2px dashed #3974a8;border-radius:.75rem;text-align:center;cursor:pointer}.drop:hover{background:#142b42}button{margin-top:1rem;padding:.7rem 1rem;border:0;border-radius:.4rem;background:#35a7e8;color:#06111c;font-weight:700}button:disabled{opacity:.5}#result{white-space:pre-wrap;background:#07101b;padding:1rem;border-radius:.5rem;margin-top:1rem}.note{color:#a9bed1;font-size:.9rem}
+  </style>
 </head>
-<body><main><span class="tag">Fase 01 · Homologação</span><h1>PCAP Doctor</h1><p>Container isolado ativo para validação de infraestrutura.</p><p>O processamento de PCAP ainda não está habilitado. As versões Web/Docker e Desktop Python/Windows permanecem independentes.</p></main></body>
-</html>
+<body><main>
+  <span>PCAP Doctor · upload-first · homologação</span>
+  <h1>Analise uma captura</h1>
+  <p>Envie um arquivo PCAP ou PCAPNG para validar o formato e obter um resultado temporário.</p>
+  <form id="upload-form"><label class="drop" for="file">Escolher arquivo PCAP/PCAPNG<input id="file" name="file" type="file" accept=".pcap,.pcapng,application/vnd.tcpdump.pcap,application/octet-stream" hidden></label><button id="submit" type="submit">Enviar e analisar</button></form>
+  <p class="note">Limite: 64 MiB. O resultado expira em 15 minutos. Esta primeira versão valida apenas assinatura, formato e tamanho; ela ainda não oferece paridade com a edição Desktop.</p>
+  <div id="result" role="status" hidden></div>
+  <script>
+    const form=document.querySelector('#upload-form'), file=document.querySelector('#file'), out=document.querySelector('#result'), button=document.querySelector('#submit');
+    form.addEventListener('submit',async event=>{event.preventDefault(); if(!file.files[0]){out.hidden=false;out.textContent='Escolha um arquivo.';return} button.disabled=true;out.hidden=false;out.textContent='Processando…';try{const body=new FormData();body.append('file',file.files[0]);const response=await fetch('/api/jobs',{method:'POST',body});const data=await response.json();out.textContent=data.message||data.error?.message||'Resposta recebida.';if(data.job_id)out.textContent+=`\n\nJob: ${data.job_id}\nFormato: ${data.format||'rejeitado'}\nBytes: ${data.bytes}`;}catch(error){out.textContent='Não foi possível enviar a captura.'}finally{button.disabled=false}});
+  </script>
+</main></body></html>

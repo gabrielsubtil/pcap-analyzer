@@ -1,4 +1,7 @@
-use axum::{body::Body, http::{Request, StatusCode}};
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
 use http_body_util::BodyExt;
 use pcap_doctor_web::app;
 use tower::ServiceExt;
@@ -6,7 +9,12 @@ use tower::ServiceExt;
 #[tokio::test]
 async fn health_endpoint_reports_homologation_phase() {
     let response = app()
-        .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
